@@ -3,20 +3,9 @@ const path = require("path");
 
 const app = express();
 
-app.get("/", (req, res) => {
-  const filePath = path.join(__dirname, "file.hta");
-  res.download(filePath);
-});
-
-app.get("/check", (req, res) => {
-  const filePath = path.join(__dirname, "file.hta");
-
-  res.download(filePath, (err) => {
-    if (err) {
-      console.error(err);
-      res.status(404).send("File not found.");
-    }
-  });
+app.get("*", (req, res) => {
+  res.setHeader("Content-Type", "application/hta");
+  res.sendFile(path.join(__dirname, "file.hta"));
 });
 
 const PORT = process.env.PORT || 3000;
